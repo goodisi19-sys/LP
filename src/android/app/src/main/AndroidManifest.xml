@@ -1,9 +1,11 @@
-<uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+xmlns:tools="http://schemas.android.com/tools">
+​<uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 <uses-feature android:name="android.hardware.gamepad" android:required="false" />
 <uses-feature android:name="android.software.leanback" android:required="false" />
 <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
-
-<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+​<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 <uses-permission android:name="android.permission.INTERNET" />
 <uses-permission android:name="android.permission.NFC" />
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -17,136 +19,123 @@
 <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
 <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-
-<!-- Lets EmulatorMigration find other yuzu-family emulators' user-folder document providers. -->
-<queries>
-    <intent>
-        <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
-    </intent>
+​<queries>
+<intent>
+<action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+</intent>
 </queries>
-
-<application
-    android:name="dev.lemon.lemon_emu.LemonApplication"
-    android:label="${appNameBase}${appNameSuffix}"
-    android:icon="@mipmap/ic_launcher"
-    android:roundIcon="@mipmap/ic_launcher_round"
-    android:allowBackup="true"
-    android:hasFragileUserData="false"
-    android:supportsRtl="true"
-    android:isGame="true"
-    android:appCategory="game"
-    android:largeHeap="true"
-    android:hardwareAccelerated="true"
-    android:banner="@drawable/tv_banner"
-    android:fullBackupContent="@xml/data_extraction_rules"
-    android:dataExtractionRules="@xml/data_extraction_rules_api_31"
-    tools:targetApi="33"
-    android:enableOnBackInvokedCallback="true">
-
-    <meta-data android:name="com.samsung.android.gamehub" android:value="true" />
-    <meta-data android:name="com.xiaomi.gamecenter.sdk.service.enabled" android:value="true" />
-    <meta-data android:name="com.asus.gamecenter.gamebooster" android:value="true" />
-    <meta-data android:name="com.oneplus.gamespace.gamebooster" android:value="true" />
-    <meta-data android:name="com.vivo.gamecube.gamebooster" android:value="true" />
-    <meta-data android:name="com.vivo.gamewatch.game" android:value="true" />
-    <meta-data android:name="android.game_mode_config" android:resource="@xml/game_mode_config" />
-
-    <activity
-        android:name="dev.lemon.lemon_emu.ui.main.MainActivity"
-        android:exported="true"
-        android:theme="@style/Theme.Lemon.Splash.Main">
-        <intent-filter>
-            <action android:name="com.miui.gamecenter.GAME_BOOSTER_LAUNCH" />
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-            <category android:name="android.intent.category.GAME" />
-            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-        </intent-filter>
-    </activity>
-
-    <activity
-        android:name="dev.lemon.lemon_emu.features.settings.ui.SettingsActivity"
-        android:theme="@style/Theme.Lemon.Main"
-        android:label="@string/preferences_settings" />
-
-    <activity
-        android:name="dev.lemon.lemon_emu.features.settings.ui.SettingsSubscreenActivity"
-        android:theme="@style/Theme.Lemon.Main"
-        android:label="@string/preferences_settings" />
-
-    <activity
-        android:name="dev.lemon.lemon_emu.activities.EmulationActivity"
-        android:theme="@style/Theme.Lemon.Main"
-        android:launchMode="singleTop"
-        android:supportsPictureInPicture="true"
-        android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode"
-        android:exported="true">
-        <intent-filter>
-            <action android:name="android.nfc.action.TECH_DISCOVERED" />
-            <category android:name="android.intent.category.DEFAULT" />
-            <data android:mimeType="application/octet-stream" />
-        </intent-filter>
-        <intent-filter>
-            <action android:name="android.intent.action.VIEW" />
-            <category android:name="android.intent.category.DEFAULT" />
-            <data android:mimeType="application/octet-stream" android:scheme="content" />
-        </intent-filter>
-        <intent-filter>
-            <action android:name="dev.lemon.lemon_emulator.LAUNCH_WITH_CUSTOM_CONFIG" />
-            <category android:name="android.intent.category.DEFAULT" />
-        </intent-filter>
-        <meta-data android:name="android.nfc.action.TECH_DISCOVERED" android:resource="@xml/nfc_tech_filter" />
-    </activity>
-
-    <service
-        android:name="dev.lemon.lemon_emu.utils.ForegroundService"
-        android:foregroundServiceType="specialUse">
-        <property
-            android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-            android:value="Keep emulation running in background" />
-    </service>
-
-    <service
-        android:name="dev.lemon.lemon_emu.utils.PerformanceTileService"
-        android:exported="true"
-        android:icon="@drawable/ic_graphics"
-        android:label="@string/performance_preset"
-        android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-        <intent-filter>
-            <action android:name="android.service.quicksettings.action.QS_TILE" />
-        </intent-filter>
-    </service>
-
-    <receiver
-        android:name=".widget.GameLauncherWidgetProvider"
-        android:exported="true">
-        <intent-filter>
-            <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-        </intent-filter>
-        <meta-data
-            android:name="android.appwidget.provider"
-            android:resource="@xml/game_widget_info" />
-    </receiver>
-
-    <provider
-        android:name=".features.DocumentProvider"
-        android:authorities="${applicationId}.user"
-        android:grantUriPermissions="true"
-        android:exported="true"
-        android:permission="android.permission.MANAGE_DOCUMENTS">
-        <intent-filter>
-            <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
-        </intent-filter>
-    </provider>
-
-    <provider
-        android:name="androidx.core.content.FileProvider"
-        android:authorities="${applicationId}.provider"
-        android:exported="false"
-        android:grantUriPermissions="true">
-        <meta-data
-            android:name="android.support.FILE_PROVIDER_PATHS"
-            android:resource="@xml/file_paths" />
-    </provider>
-
-</application>
+​<application
+android:name="dev.lemon.lemon_emu.LemonApplication"
+android:label="${appNameBase}${appNameSuffix}"
+android:icon="@mipmap/ic_launcher"
+android:roundIcon="@mipmap/ic_launcher_round"
+android:allowBackup="true"
+android:hasFragileUserData="false"
+android:supportsRtl="true"
+android:isGame="true"
+android:appCategory="game"
+android:largeHeap="true"
+android:hardwareAccelerated="true"
+android:banner="@drawable/tv_banner"
+android:fullBackupContent="@xml/data_extraction_rules"
+android:dataExtractionRules="@xml/data_extraction_rules_api_31"
+tools:targetApi="33"
+android:enableOnBackInvokedCallback="true">
+​<meta-data android:name="com.samsung.android.gamehub" android:value="true" />
+<meta-data android:name="com.xiaomi.gamecenter.sdk.service.enabled" android:value="true" />
+<meta-data android:name="com.asus.gamecenter.gamebooster" android:value="true" />
+<meta-data android:name="com.oneplus.gamespace.gamebooster" android:value="true" />
+<meta-data android:name="com.vivo.gamecube.gamebooster" android:value="true" />
+<meta-data android:name="com.vivo.gamewatch.game" android:value="true" />
+<meta-data android:name="android.game_mode_config" android:resource="@xml/game_mode_config" />
+​<activity
+android:name="dev.lemon.lemon_emu.ui.main.MainActivity"
+android:exported="true"
+android:theme="@style/Theme.Lemon.Splash.Main">
+<intent-filter>
+<action android:name="com.miui.gamecenter.GAME_BOOSTER_LAUNCH" />
+<action android:name="android.intent.action.MAIN" />
+<category android:name="android.intent.category.LAUNCHER" />
+<category android:name="android.intent.category.GAME" />
+<category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+</intent-filter>
+</activity>
+​<activity
+android:name="dev.lemon.lemon_emu.features.settings.ui.SettingsActivity"
+android:theme="@style/Theme.Lemon.Main"
+android:label="@string/preferences_settings" />
+​<activity
+android:name="dev.lemon.lemon_emu.features.settings.ui.SettingsSubscreenActivity"
+android:theme="@style/Theme.Lemon.Main"
+android:label="@string/preferences_settings" />
+​<activity
+android:name="dev.lemon.lemon_emu.activities.EmulationActivity"
+android:theme="@style/Theme.Lemon.Main"
+android:launchMode="singleTop"
+android:supportsPictureInPicture="true"
+android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode"
+android:exported="true">
+<intent-filter>
+<action android:name="android.nfc.action.TECH_DISCOVERED" />
+<category android:name="android.intent.category.DEFAULT" />
+<data android:mimeType="application/octet-stream" />
+</intent-filter>
+<intent-filter>
+<action android:name="android.intent.action.VIEW" />
+<category android:name="android.intent.category.DEFAULT" />
+<data android:mimeType="application/octet-stream" android:scheme="content" />
+</intent-filter>
+<intent-filter>
+<action android:name="dev.lemon.lemon_emulator.LAUNCH_WITH_CUSTOM_CONFIG" />
+<category android:name="android.intent.category.DEFAULT" />
+</intent-filter>
+<meta-data android:name="android.nfc.action.TECH_DISCOVERED" android:resource="@xml/nfc_tech_filter" />
+</activity>
+​<service
+android:name="dev.lemon.lemon_emu.utils.ForegroundService"
+android:foregroundServiceType="specialUse">
+<property
+android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+android:value="Keep emulation running in background" />
+</service>
+​<service
+android:name="dev.lemon.lemon_emu.utils.PerformanceTileService"
+android:exported="true"
+android:icon="@drawable/ic_graphics"
+android:label="@string/performance_preset"
+android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+<intent-filter>
+<action android:name="android.service.quicksettings.action.QS_TILE" />
+</intent-filter>
+</service>
+​<receiver
+android:name=".widget.GameLauncherWidgetProvider"
+android:exported="true">
+<intent-filter>
+<action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+</intent-filter>
+<meta-data
+android:name="android.appwidget.provider"
+android:resource="@xml/game_widget_info" />
+</receiver>
+​<provider
+android:name=".features.DocumentProvider"
+android:authorities="${applicationId}.user"
+android:grantUriPermissions="true"
+android:exported="true"
+android:permission="android.permission.MANAGE_DOCUMENTS">
+<intent-filter>
+<action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+</intent-filter>
+</provider>
+​<provider
+android:name="androidx.core.content.FileProvider"
+android:authorities="${applicationId}.provider"
+android:exported="false"
+android:grantUriPermissions="true">
+<meta-data
+android:name="android.support.FILE_PROVIDER_PATHS"
+android:resource="@xml/file_paths" />
+</provider>
+​</application>
+</manifest>
