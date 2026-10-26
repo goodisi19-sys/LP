@@ -32,6 +32,8 @@
     <string name="overlay_snap_to_grid_description">Snap overlay controls to a grid when editing</string>
     <string name="overlay_grid_size">Grid Size</string>
     <string name="overlay_grid_size_description">Size of the grid cells in pixels</string>
+    <string name="overlay_camera_sensitivity">Чувствительность свайп-камеры</string>
+    <string name="overlay_camera_sensitivity_description">Скорость вращения правого стика при свайпах по экрану</string>
     <string name="input_overlay_behavior">Behavior</string>
     <string name="overlay_auto_hide">Overlay Auto Hide</string>
     <string name="overlay_auto_hide_description">Automatically hide the touch controls overlay after the specified time of inactivity.</string>
@@ -45,7 +47,6 @@
     <string name="input_overlay_options_description">Configure on-screen controls</string>
     <string name="edit_overlay_layout">Edit Overlay Layout</string>
     <string name="edit_overlay_layout_description">Adjust the position and scale of on-screen controls</string>
-
 
     <!-- Stats Overlay settings -->
     <string name="process_ram">Process RAM: %1$d MB</string>
@@ -226,7 +227,6 @@
     <string name="step_complete">Complete!</string>
 
     <!-- Home strings -->
-
     <string name="alphabetical">Alphabetical</string>
     <string name="view_list">List</string>
     <string name="view_grid">Grid</string>
@@ -533,7 +533,6 @@
     <string name="firmware_uninstalling">Uninstalling firmware</string>
     <string name="firmware_uninstalled_success">Firmware uninstalled successfully</string>
 
-
     <string name="keys_failed">Failed to Install Keys</string>
     <string name="keys_install_success">Keys successfully installed</string>
     <string name="error_keys_copy_failed">One or more keys failed to copy.</string>
@@ -664,7 +663,6 @@
     <string name="fsr_sharpness_description">Determines how sharpened the image will look while using FSR or SGSR filters</string>
     <string name="renderer_anti_aliasing">Anti-aliasing method</string>
 
-
     <string name="advanced">Advanced</string>
 
     <string name="renderer_accuracy">GPU Mode</string>
@@ -723,7 +721,6 @@
     <string name="gpu_unswizzle_chunk_size_description">Defines the number of depth slices processed per batch for 3D textures. Increasing this improves throughput efficiency on powerful GPUs but may cause stuttering or driver timeouts on weaker hardware.</string>
     <string name="gpu_unswizzle_default_button">Default</string>
 
-
     <string name="extensions">Extensions</string>
 
     <string name="dyna_state">Extended Dynamic State</string>
@@ -733,7 +730,6 @@
     <string name="vertex_input_dynamic_state_description">Enabling this feature allows for more flexible vertex input handling, potentially reducing pipeline compilation time in vertex/buffer.</string>
     <string name="sample_shading_fraction">Sample Shading</string>
     <string name="sample_shading_fraction_description">Allows the fragment shader to execute per sample in a multi-sampled fragment instead once per fragment. Improves graphics quality at the cost of some performance.</string>
-
 
     <string name="display">Display</string>
 
@@ -1237,7 +1233,6 @@
     <string name="amiibo_unknown_error">An unknown error occurred</string>
     <string name="amiibo_load_success">Amiibo loaded</string>
 
-
     <!-- Software keyboard -->
     <string name="software_keyboard">Software keyboard</string>
 
@@ -1353,7 +1348,6 @@
     <string name="accelerate_astc_cpu" translatable="false">CPU</string>
     <string name="accelerate_astc_gpu" translatable="false">GPU</string>
     <string name="accelerate_astc_async" translatable="false">CPU Async</string>
-
 
     <string name="vram_usage_conservative">Conservative</string>
     <string name="vram_usage_aggressive">Aggressive</string>
@@ -2090,12 +2084,12 @@ https://datatracker.ietf.org/ipr/1526/
     <string name="license_sirit_text" translatable="false">
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:\n
-* Redistributions of source code must retain the above copyright
+- Redistributions of source code must retain the above copyright
   notice, this list of conditions and the following disclaimer.\n
-* Redistributions in binary form must reproduce the above copyright
+- Redistributions in binary form must reproduce the above copyright
   notice, this list of conditions and the following disclaimer in the
   documentation and/or other materials provided with the distribution.\n
-* Neither the name of the organization nor the
+- Neither the name of the organization nor the
   names of its contributors may be used to endorse or promote products
   derived from this software without specific prior written permission.\n\n
 
