@@ -73,7 +73,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "dev.lemon.lemon_emulator.mod"
+        applicationId = "dev.lemon.lemon_emulator"
         minSdk = 24
         targetSdk = 36
         versionName = getGitVersion()
@@ -103,12 +103,13 @@ android {
                     )
                 )
 
-                // Флаги Clang под Snapdragon 8 Elite (Oryon + SVE2 + ThinLTO + автовекторизация)
+                // Безопасный набор аппаратных оптимизаций под Snapdragon 8 Elite:
+                // Включает аппаратную полуторочную точность (FP16), целочисленный DotProduct,
+                // криптографию и уровень O3, исключая SVE2 и ThinLTO для предотвращения краша Boost.Context
                 cppFlags.addAll(
                     listOf(
-                        "-march=armv9-a+crypto+fp16+dotprod+sve2",
+                        "-march=armv8.4-a+crypto+fp16+dotprod",
                         "-O3",
-                        "-flto=thin",
                         "-fvectorize",
                         "-fslp-vectorize"
                     )
@@ -226,8 +227,8 @@ android {
             isDefault = true
             minSdk = 31
 
-            manifestPlaceholders += mapOf("appNameBase" to "Lemon Mod")
-            resValue("string", "app_name_suffixed", "Lemon Mod")
+            manifestPlaceholders += mapOf("appNameBase" to "Lemon")
+            resValue("string", "app_name_suffixed", "Lemon")
 
             ndk {
                 abiFilters += listOf("arm64-v8a")
