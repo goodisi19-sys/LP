@@ -73,7 +73,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "dev.lemon.lemon_emulator"
+        applicationId = "dev.lemon.lemon_emulator.mod"
         minSdk = 24
         targetSdk = 36
         versionName = getGitVersion()
@@ -103,22 +103,21 @@ android {
                     )
                 )
 
+                // Флаги Clang под Snapdragon 8 Elite (Oryon + SVE2 + ThinLTO + автовекторизация)
+                cppFlags.addAll(
+                    listOf(
+                        "-march=armv9-a+crypto+fp16+dotprod+sve2",
+                        "-O3",
+                        "-flto=thin",
+                        "-fvectorize",
+                        "-fslp-vectorize"
+                    )
+                )
+
                 // Unused by CMake itself - GenerateSCMRev.cmake queries git directly.
                 // This exists purely so this argument LIST changes whenever HEAD moves,
                 // which forces AGP to treat the CMake configure step as out-of-date and
                 // rerun it (regenerating scm_rev.cpp) on every build with a new commit.
-                // Without it, AGP's own up-to-date check for the native configure task
-                // has no way to know the git commit changed (git state isn't a tracked
-                // Gradle task input), so it silently reuses a stale cached configure -
-                // this is exactly why About screen / g_build_version was found frozen at
-                // an old commit across several "Release"-type builds.
-                //
-                // The price: AGP names its native build folder after a hash of these
-                // arguments, so every commit gets a NEW folder and recompiles the whole
-                // emulator (about 1,700 objects, ~20 minutes). A development build
-                // (-PfastDev=true, build.sh --fast) leaves the argument out: the folder
-                // stays the same, only the files that changed are rebuilt, and the version
-                // the app reports may lag behind the commit. Never use it for a release.
                 if ((project.findProperty("fastDev") as String?) != "true") {
                     arguments.add("-DYUZU_GIT_COMMIT_HASH=${getGitCommitHash()}")
                 }
@@ -157,9 +156,6 @@ android {
         }
     }
 
-    // The app name is constructed with the appNameSuffix and appNameBase manifest placeholders
-    // suffix is used for build type--remember to include a space beforehand
-
     // Define build types, which are orthogonal to product flavors.
     buildTypes {
         // Signed by release key, allowing for upload to Play Store.
@@ -187,14 +183,6 @@ android {
                 "proguard-rules.pro"
             )
 
-            // Without this, AGP has no way to tell this variant's native CMake
-            // configuration apart from "relWithDebInfo" below - neither block set an
-            // explicit CMAKE_BUILD_TYPE, so both silently hashed to the same .cxx
-            // configure slot and shared one compiled .so (confirmed via matching
-            // SHA256). That meant "Release" builds were never actually built with
-            // Release-level optimization/NDEBUG, and their embedded scm_rev.cpp
-            // (build version/branch) went stale whenever a relWithDebInfo build was
-            // the last one to trigger a real reconfigure.
             externalNativeBuild {
                 cmake {
                     arguments.add("-DCMAKE_BUILD_TYPE=Release")
@@ -203,7 +191,6 @@ android {
         }
 
         // builds a release build that doesn't need signing
-        // Attaches 'debug' suffix to version and package name, allowing installation alongside the release build.
         register("relWithDebInfo") {
             isDefault = true
             signingConfig = signingConfigs.getByName("default")
@@ -221,7 +208,6 @@ android {
         }
 
         // Signed by debug key disallowing distribution on Play Store.
-        // Attaches 'debug' suffix to version and package name, allowing installation alongside the release build.
         debug {
             signingConfig = signingConfigs.getByName("default")
             isDebuggable = true
@@ -233,27 +219,21 @@ android {
         }
     }
 
-    // appNameBase is used for the primary identifier
-    // this should be "Lemon <flavorName>"
     flavorDimensions.add("version")
     productFlavors {
         create("mainline") {
             dimension = "version"
             isDefault = true
-            // Android 12. Everything newer is guarded at runtime (SDK_INT checks, dlsym for
-            // APerformanceHint).
             minSdk = 31
 
-            manifestPlaceholders += mapOf("appNameBase" to "Lemon")
-            resValue("string", "app_name_suffixed", "Lemon")
+            manifestPlaceholders += mapOf("appNameBase" to "Lemon Mod")
+            resValue("string", "app_name_suffixed", "Lemon Mod")
 
             ndk {
                 abiFilters += listOf("arm64-v8a")
             }
         }
 
-        // Lemon Lite: lighter default settings for weaker GPUs, no bundled Lemon-Ade (that driver is
-        // only picked on the Adreno 830). Own package, so it installs next to Lemon.
         create("lite") {
             dimension = "version"
             minSdk = 31
@@ -278,8 +258,6 @@ android {
             }
         }
 
-        // Lemon Lite & Spoofed: Lemon Lite under AnTuTu's package name, which some phone makers
-        // (MediaTek devices above all) give their full performance profile.
         create("liteSpoofed") {
             dimension = "version"
             minSdk = 31
@@ -345,7 +323,6 @@ android {
                 abiFilters += listOf("arm64-v8a")
             }
         }
-
     }
 
     externalNativeBuild {
@@ -359,7 +336,6 @@ android {
         val currentName = manifestPlaceholders["appNameBase"] as? String ?: "Lemon"
         val suffix = if (isExperimental) " Experimental" else if (isNightly) " Nightly" else ""
 
-        // apply nightly/experimental suffix I/A
         resValue("string", "app_name_suffixed", "$currentName$suffix")
         resValue("string", "app_name", "Lemon$suffix")
     }
@@ -372,21 +348,13 @@ android {
     }
 
     lint {
-        // "Instantiatable" false-positives on every AndroidX/Material widget and every
-        // Activity in the manifest (NavigationView, MaterialCardView, MainActivity, etc.) -
-        // lint can't see through the full classpath during the release lintVital pass to
-        // confirm they extend View/Activity, even though they obviously do. Android's own
-        // lint explanation for this check suggests disabling it when hitting this pattern.
         disable += "Instantiatable"
     }
 }
 
 idea {
     module {
-        // Inclusion to exclude build/ dir from non-Android
         excludeDirs.add(file("${coreDir}/build"))
-
-        // also exclude CPM cache from automatic indexing
         excludeDirs.add(file("${coreDir}/.cache"))
     }
 }
