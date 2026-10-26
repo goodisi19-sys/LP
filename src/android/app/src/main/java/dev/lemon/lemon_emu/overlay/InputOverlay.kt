@@ -78,8 +78,14 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
     private var cameraPointerId: Int = -1
     private var lastCameraX: Float = 0f
     private var lastCameraY: Float = 0f
-    // Чувствительность свайпа камеры: оптимальный баланс точности и скорости поворота
-    private val swipeSensitivity = 0.038f
+
+    // Динамическое считывание чувствительности из меню настроек оверлея
+    private val swipeSensitivity: Float
+        get() {
+            val userSetting = runCatching { IntSetting.OVERLAY_CAMERA_SENSITIVITY.getInt() }.getOrDefault(35)
+            return (if (userSetting > 0) userSetting else 35) / 1000f
+        }
+
     private val cameraResetHandler = Handler(Looper.getMainLooper())
     private var activePlayerIndex = 0
 
