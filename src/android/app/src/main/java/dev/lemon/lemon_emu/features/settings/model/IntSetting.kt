@@ -41,6 +41,14 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
     APP_LANGUAGE("app_language"),
     OVERLAY_SCALE("control_scale"),
     OVERLAY_OPACITY("control_opacity"),
+    OVERLAY_CAMERA_SENSITIVITY("overlay_camera_sensitivity") {
+        override val defaultValue: Int = 35
+
+        override fun getInt(needsGlobal: Boolean): Int {
+            val value = runCatching { NativeConfig.getInt(key, needsGlobal) }.getOrDefault(0)
+            return if (value > 0) value else defaultValue
+        }
+    },
     LOCK_DRAWER("lock_drawer"),
     VERTICAL_ALIGNMENT("vertical_alignment"),
     PERF_OVERLAY_POSITION("perf_overlay_position"),
