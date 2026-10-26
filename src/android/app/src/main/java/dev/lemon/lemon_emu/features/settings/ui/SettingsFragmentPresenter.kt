@@ -832,6 +832,15 @@ class SettingsFragmentPresenter(
             add(BooleanSetting.SHOW_INPUT_OVERLAY.key)
             add(BooleanSetting.OVERLAY_SNAP_TO_GRID.key)
             add(IntSetting.OVERLAY_GRID_SIZE.key)
+            add(
+                SliderSetting(
+                    IntSetting.OVERLAY_CAMERA_SENSITIVITY,
+                    titleId = R.string.overlay_camera_sensitivity,
+                    descriptionId = R.string.overlay_camera_sensitivity_description,
+                    min = 5,
+                    max = 100
+                )
+            )
             // It starts its own emulation screen; in a game, the in-game menu edits the layout.
             if (!NativeLibrary.isRunning()) {
                 add(
@@ -1029,7 +1038,7 @@ class SettingsFragmentPresenter(
 
             override var global = true
 
-            override val isRuntimeModifiable = true
+            override val isRuntimeModifiable: Boolean = true
 
             override val isSaveable = true
         }
