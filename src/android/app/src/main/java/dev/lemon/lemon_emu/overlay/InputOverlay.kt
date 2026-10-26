@@ -32,8 +32,10 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.core.content.ContextCompat
 import androidx.window.layout.WindowMetricsCalculator
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 import dev.lemon.lemon_emu.NativeLibrary
 import dev.lemon.lemon_emu.features.input.NativeInput
 import dev.lemon.lemon_emu.R
@@ -71,6 +73,19 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
     private var touchStartY = 0f
     private var hasMoved = false
     private val moveThreshold = 20f
+
+    // --- SWIPE CAMERA CONTROL (Плавающий свайп правого стика как в Android шутерах) ---
+    private var cameraPointerId: Int = -1
+    private var lastCameraX: Float = 0f
+    private var lastCameraY: Float = 0f
+    // Чувствительность свайпа камеры: оптимальный баланс точности и скорости поворота
+    private val swipeSensitivity = 0.038f
+    private val cameraResetHandler = Handler(Looper.getMainLooper())
+    private var activePlayerIndex = 0
+
+    private val resetStickRunnable = Runnable {
+        sendJoystickEvent(activePlayerIndex, NativeAnalog.RStick, 0f, 0f)
+    }
 
     private val gridPaint = Paint().apply {
         color = Color.argb(60, 255, 255, 255)
@@ -249,6 +264,7 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             NpadStyleIndex.Handheld -> 8
             else -> 0
         }
+        activePlayerIndex = playerIndex
 
         for (button in overlayButtons) {
             if (!button.updateStatus(event)) {
@@ -314,6 +330,12 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             invalidate()
         }
 
+        // Запоминаем текущий палец камеры перед обработкой, чтобы он не просочился в сенсор экрана
+        val currentCameraFinger = cameraPointerId
+
+        // Обработка жеста свайпа правого стика (Camera Control)
+        handleCameraSwipe(event, playerIndex)
+
         if (!BooleanSetting.TOUCHSCREEN.getBoolean()) {
             return true
         }
@@ -329,25 +351,103 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
         val isActionUp =
             motionEvent == MotionEvent.ACTION_UP || motionEvent == MotionEvent.ACTION_POINTER_UP
 
-        if (isActionDown && !isTouchInputConsumed(pointerId)) {
+        val isCameraTouch = (pointerId == cameraPointerId || pointerId == currentCameraFinger)
+
+        if (isActionDown && !isTouchInputConsumed(pointerId) && !isCameraTouch) {
             NativeInput.onTouchPressed(pointerId, xPosition.toFloat(), yPosition.toFloat())
         }
 
         if (isActionMove) {
             for (i in 0 until event.pointerCount) {
                 val fingerId = event.getPointerId(i)
-                if (isTouchInputConsumed(fingerId)) {
+                if (isTouchInputConsumed(fingerId) || fingerId == cameraPointerId || fingerId == currentCameraFinger) {
                     continue
                 }
                 NativeInput.onTouchMoved(fingerId, event.getX(i), event.getY(i))
             }
         }
 
-        if (isActionUp && !isTouchInputConsumed(pointerId)) {
+        if (isActionUp && !isTouchInputConsumed(pointerId) && !isCameraTouch) {
             NativeInput.onTouchReleased(pointerId)
         }
 
         return true
+    }
+
+    /**
+     * Обрабатывает свободный свайп пальцем в правой половине экрана
+     * и транслирует дельту движения в координаты правого аналогового стика.
+     */
+    private fun handleCameraSwipe(event: MotionEvent, playerIndex: Int) {
+        val actionMasked = event.actionMasked
+        val actionIndex = event.actionIndex
+        val pointerId = event.getPointerId(actionIndex)
+
+        when (actionMasked) {
+            MotionEvent.ACTION_DOWN,
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                val x = event.getX(actionIndex)
+                val y = event.getY(actionIndex)
+                // Зона свайпа: правая часть экрана (начиная с 45% ширины экрана) в свободной от кнопок зоне
+                if (cameraPointerId == -1 && x > (width * 0.45f) && !isTouchInputConsumed(pointerId)) {
+                    cameraPointerId = pointerId
+                    lastCameraX = x
+                    lastCameraY = y
+                    cameraResetHandler.removeCallbacks(resetStickRunnable)
+                }
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (cameraPointerId != -1) {
+                    val pointerIdx = event.findPointerIndex(cameraPointerId)
+                    if (pointerIdx != -1) {
+                        val currentX = event.getX(pointerIdx)
+                        val currentY = event.getY(pointerIdx)
+
+                        val deltaX = currentX - lastCameraX
+                        val deltaY = currentY - lastCameraY
+
+                        lastCameraX = currentX
+                        lastCameraY = currentY
+
+                        // Фильтр микротряски пальца (deadzone меньше 0.5 пикселя)
+                        if (abs(deltaX) > 0.5f || abs(deltaY) > 0.5f) {
+                            // Нормализуем значение в диапазон [-1.0f .. 1.0f]
+                            // Ось Y инвертирована, так как в Android координаты Y растут вниз
+                            val stickX = (deltaX * swipeSensitivity).coerceIn(-1.0f, 1.0f)
+                            val stickY = (-deltaY * swipeSensitivity).coerceIn(-1.0f, 1.0f)
+
+                            sendJoystickEvent(playerIndex, NativeAnalog.RStick, stickX, stickY)
+
+                            // Если палец замер на месте без движения, через 40мс сбрасываем стик в 0,
+                            // чтобы камера не продолжала бесконечное вращение
+                            cameraResetHandler.removeCallbacks(resetStickRunnable)
+                            cameraResetHandler.postDelayed(resetStickRunnable, 40)
+                        }
+                    }
+                }
+            }
+
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (pointerId == cameraPointerId) {
+                    cameraPointerId = -1
+                    cameraResetHandler.removeCallbacks(resetStickRunnable)
+                    sendJoystickEvent(playerIndex, NativeAnalog.RStick, 0f, 0f)
+                }
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                cameraPointerId = -1
+                cameraResetHandler.removeCallbacks(resetStickRunnable)
+                sendJoystickEvent(playerIndex, NativeAnalog.RStick, 0f, 0f)
+            }
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        cameraResetHandler.removeCallbacks(resetStickRunnable)
     }
 
     /** Forwards to [NativeInput.onOverlayButtonEvent], also feeding [MacroRecorder] when a
@@ -419,7 +519,7 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                     }
 
                 MotionEvent.ACTION_MOVE -> if (buttonBeingConfigured != null) {
-                    val moveDistance = kotlin.math.sqrt(
+                    val moveDistance = sqrt(
                         (event.getX(pointerIndex) - touchStartX).let { it * it } +
                                 (event.getY(pointerIndex) - touchStartY).let { it * it }
                     )
@@ -473,7 +573,7 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                     }
 
                 MotionEvent.ACTION_MOVE -> if (dpadBeingConfigured != null) {
-                    val moveDistance = kotlin.math.sqrt(
+                    val moveDistance = sqrt(
                         (event.getX(pointerIndex) - touchStartX).let { it * it } +
                                 (event.getY(pointerIndex) - touchStartY).let { it * it }
                     )
@@ -526,7 +626,7 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                 }
 
                 MotionEvent.ACTION_MOVE -> if (joystickBeingConfigured != null) {
-                    val moveDistance = kotlin.math.sqrt(
+                    val moveDistance = sqrt(
                         (event.getX(pointerIndex) - touchStartX).let { it * it } +
                                 (event.getY(pointerIndex) - touchStartY).let { it * it }
                     )
@@ -855,7 +955,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             OverlayLayout.Landscape -> data?.landscapePosition = newPosition
             OverlayLayout.Portrait -> data?.portraitPosition = newPosition
             OverlayLayout.Foldable -> data?.foldablePosition = newPosition
-
         }
 
         data?.individualScale = individuaScale
@@ -871,6 +970,10 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             gamelessMode = false
         }
 
+        // Сброс свайпа камеры при смене режима
+        cameraPointerId = -1
+        cameraResetHandler.removeCallbacks(resetStickRunnable)
+
         invalidate()
     }
 
@@ -885,7 +988,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
         val overlayControlData = NativeConfig.getOverlayControlData()
         // prevent dialog from being spam opened
         scaleDialog?.dismiss()
-
 
         when {
             button != null -> {
@@ -904,8 +1006,7 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                             refreshControls()
                         }
 
-                    scaleDialog?.showDialog(x,y, button.bounds.width(), button.bounds.height())
-
+                    scaleDialog?.showDialog(x, y, button.bounds.width(), button.bounds.height())
                 }
             }
 
@@ -925,8 +1026,7 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                         refreshControls()
                     }
 
-                    scaleDialog?.showDialog(x,y, dpad.bounds.width(), dpad.bounds.height())
-
+                    scaleDialog?.showDialog(x, y, dpad.bounds.width(), dpad.bounds.height())
                 }
             }
 
@@ -945,13 +1045,11 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                         refreshControls()
                     }
 
-                    scaleDialog?.showDialog(x,y, joystick.bounds.width(), joystick.bounds.height())
-
+                    scaleDialog?.showDialog(x, y, joystick.bounds.width(), joystick.bounds.height())
                 }
             }
         }
     }
-
 
     /**
      * Applies and saves all default values for the overlay
@@ -1009,19 +1107,12 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
         refreshControls()
     }
 
-    // Presets are just starting points, not a persisted "mode" - applying one is a one-shot
-    // action (like Reset already is), and the result stays fully editable afterward via the
-    // normal edit mode. Each preset is built from the same per-control defaults edit mode
-    // itself resets to (OverlayControl), so it can't produce a layout edit mode wouldn't
-    // already consider valid.
     fun applyPreset(preset: OverlayPreset) {
         resetLayoutVisibilityAndPlacement()
         resetIndividualControlScale()
 
         when (preset) {
-            OverlayPreset.Default -> {
-                // Already handled by the reset calls above.
-            }
+            OverlayPreset.Default -> {}
 
             OverlayPreset.Big -> {
                 val overlayControlData = NativeConfig.getOverlayControlData()
@@ -1072,12 +1163,9 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
 
     companion object {
 
-        // Increase this number every time there is a breaking change to every overlay layout
         const val OVERLAY_VERSION = 1
-
         private const val BIG_PRESET_SCALE = 1.4f
 
-        // Increase the corresponding layout version number whenever that layout has a breaking change
         private const val LANDSCAPE_OVERLAY_VERSION = 1
         private const val PORTRAIT_OVERLAY_VERSION = 1
         private const val FOLDABLE_OVERLAY_VERSION = 1
@@ -1087,14 +1175,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             FOLDABLE_OVERLAY_VERSION
         )
 
-        /**
-         * Resizes a [Bitmap] by a given scale factor
-         *
-         * @param context       Context for getting the vector drawable
-         * @param drawableId    The ID of the drawable to scale.
-         * @param scale         The scale factor for the bitmap.
-         * @return The scaled [Bitmap]
-         */
         private fun getBitmap(context: Context, drawableId: Int, scale: Float): Bitmap {
             val vectorDrawable = ContextCompat.getDrawable(context, drawableId) as VectorDrawable
 
@@ -1123,18 +1203,10 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             return scaledBitmap
         }
 
-        /**
-         * Gets the safe screen size for drawing the overlay
-         *
-         * @param context   Context for getting the window metrics
-         * @return A pair of points, the first being the top left corner of the safe area,
-         *                  the second being the bottom right corner of the safe area
-         */
         private fun getSafeScreenSize(
             context: Context,
             screenSize: Pair<Int, Int>
         ): Pair<Point, Point> {
-            // Get screen size
             val windowMetrics = WindowMetricsCalculator.getOrCreate()
                 .computeCurrentWindowMetrics(context as Activity)
             var maxX = screenSize.first.toFloat()
@@ -1142,7 +1214,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             var minX = 0
             var minY = 0
 
-            // If we have API access, calculate the safe area to draw the overlay
             var cutoutLeft = 0
             var cutoutBottom = 0
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -1167,9 +1238,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                 }
             }
 
-            // This makes sure that if we have an inset on one side of the screen, we mirror it on
-            // the other side. Since removing space from one of the max values messes with the scale,
-            // we also have to account for it using our min values.
             if (maxX.toInt() != windowMetrics.bounds.width()) minX += cutoutLeft
             if (maxY.toInt() != windowMetrics.bounds.height()) minY += cutoutBottom
             if (minX > 0 && maxX.toInt() == windowMetrics.bounds.width()) {
@@ -1186,33 +1254,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             return Pair(Point(minX, minY), Point(maxX.toInt(), maxY.toInt()))
         }
 
-        /**
-         * Initializes an InputOverlayDrawableButton, given by resId, with all of the
-         * parameters set for it to be properly shown on the InputOverlay.
-         *
-         *
-         * This works due to the way the X and Y coordinates are stored within
-         * the [SharedPreferences].
-         *
-         *
-         * In the input overlay configuration menu,
-         * once a touch event begins and then ends (ie. Organizing the buttons to one's own liking for the overlay).
-         * the X and Y coordinates of the button at the END of its touch event
-         * (when you remove your finger/stylus from the touchscreen) are then stored in a native .
-         *
-         * Technically no modifications should need to be performed on the returned
-         * InputOverlayDrawableButton. Simply add it to the HashSet of overlay items and wait
-         * for Android to call the onDraw method.
-         *
-         * @param context            The current [Context].
-         * @param windowSize         The size of the window to draw the overlay on.
-         * @param defaultResId       The resource ID of the [Drawable] to get the [Bitmap] of (Default State).
-         * @param pressedResId       The resource ID of the [Drawable] to get the [Bitmap] of (Pressed State).
-         * @param buttonId           Identifier for determining what type of button the initialized InputOverlayDrawableButton represents.
-         * @param overlayControlData Identifier for determining where a button appears on screen.
-         * @param position           The position on screen as represented by an x and y value between 0 and 1.
-         * @return An [InputOverlayDrawableButton] with the correct drawing bounds set.
-         */
         private fun initializeOverlayButton(
             context: Context,
             windowSize: Pair<Point, Point>,
@@ -1222,10 +1263,8 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             overlayControlData: OverlayControlData,
             position: Pair<Double, Double>
         ): InputOverlayDrawableButton {
-            // Resources handle for fetching the initial Drawable resource.
             val res = context.resources
 
-            // Decide scale based on button preference ID and user preference
             var scale: Float = when (overlayControlData.id) {
                 OverlayControl.BUTTON_HOME.id,
                 OverlayControl.BUTTON_CAPTURE.id,
@@ -1245,10 +1284,8 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             scale *= (IntSetting.OVERLAY_SCALE.getInt() + 50).toFloat()
             scale /= 100f
 
-            // Apply individual scale
             scale *= overlayControlData.individualScale.let { if (it > 0f) it else 1f }
 
-            // Initialize the InputOverlayDrawableButton.
             val defaultStateBitmap = getBitmap(context, defaultResId, scale)
             val pressedStateBitmap = getBitmap(context, pressedResId, scale)
             val overlayDrawable = InputOverlayDrawableButton(
@@ -1259,19 +1296,14 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                 overlayControlData
             )
 
-            // Get the minimum and maximum coordinates of the screen where the button can be placed.
             val min = windowSize.first
             val max = windowSize.second
 
-            // The X and Y coordinates of the InputOverlayDrawableButton on the InputOverlay.
-            // These were set in the input overlay configuration menu.
             val drawableX = (position.first * max.x + min.x).toInt()
             val drawableY = (position.second * max.y + min.y).toInt()
             val width = overlayDrawable.width
             val height = overlayDrawable.height
 
-            // Now set the bounds for the InputOverlayDrawableButton.
-            // This will dictate where on the screen (and the what the size) the InputOverlayDrawableButton will be.
             overlayDrawable.setBounds(
                 drawableX - (width / 2),
                 drawableY - (height / 2),
@@ -1279,7 +1311,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                 drawableY + (height / 2)
             )
 
-            // Need to set the image's position
             overlayDrawable.setPosition(
                 drawableX - (width / 2),
                 drawableY - (height / 2)
@@ -1288,17 +1319,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             return overlayDrawable
         }
 
-        /**
-         * Initializes an [InputOverlayDrawableDpad]
-         *
-         * @param context                   The current [Context].
-         * @param windowSize                The size of the window to draw the overlay on.
-         * @param defaultResId              The [Bitmap] resource ID of the default state.
-         * @param pressedOneDirectionResId  The [Bitmap] resource ID of the pressed state in one direction.
-         * @param pressedTwoDirectionsResId The [Bitmap] resource ID of the pressed state in two directions.
-         * @param position                  The position on screen as represented by an x and y value between 0 and 1.
-         * @return The initialized [InputOverlayDrawableDpad]
-         */
         private fun initializeOverlayDpad(
             context: Context,
             windowSize: Pair<Point, Point>,
@@ -1307,24 +1327,19 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             pressedTwoDirectionsResId: Int,
             position: Pair<Double, Double>
         ): InputOverlayDrawableDpad {
-            // Resources handle for fetching the initial Drawable resource.
             val res = context.resources
 
-            // Get the dpad control data for individual scale
             val overlayControlData = NativeConfig.getOverlayControlData()
             val dpadData = overlayControlData.firstOrNull { it.id == OverlayControl.COMBINED_DPAD.id }
 
-            // Decide scale based on button ID and user preference
             var scale = 0.25f
             scale *= (IntSetting.OVERLAY_SCALE.getInt() + 50).toFloat()
             scale /= 100f
 
-            // Apply individual scale
             if (dpadData != null) {
                 scale *= dpadData.individualScale.let { if (it > 0f) it else 1f }
             }
 
-            // Initialize the InputOverlayDrawableDpad.
             val defaultStateBitmap =
                 getBitmap(context, defaultResId, scale)
             val pressedOneDirectionStateBitmap = getBitmap(context, pressedOneDirectionResId, scale)
@@ -1338,19 +1353,14 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                 pressedTwoDirectionsStateBitmap
             )
 
-            // Get the minimum and maximum coordinates of the screen where the button can be placed.
             val min = windowSize.first
             val max = windowSize.second
 
-            // The X and Y coordinates of the InputOverlayDrawableDpad on the InputOverlay.
-            // These were set in the input overlay configuration menu.
             val drawableX = (position.first * max.x + min.x).toInt()
             val drawableY = (position.second * max.y + min.y).toInt()
             val width = overlayDrawable.width
             val height = overlayDrawable.height
 
-            // Now set the bounds for the InputOverlayDrawableDpad.
-            // This will dictate where on the screen (and the what the size) the InputOverlayDrawableDpad will be.
             overlayDrawable.setBounds(
                 drawableX - (width / 2),
                 drawableY - (height / 2),
@@ -1358,26 +1368,11 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                 drawableY + (height / 2)
             )
 
-            // Need to set the image's position
             overlayDrawable.setPosition(drawableX - (width / 2), drawableY - (height / 2))
             overlayDrawable.setOpacity(IntSetting.OVERLAY_OPACITY.getInt() * 255 / 100)
             return overlayDrawable
         }
 
-        /**
-         * Initializes an [InputOverlayDrawableJoystick]
-         *
-         * @param context         The current [Context]
-         * @param windowSize      The size of the window to draw the overlay on.
-         * @param resOuter        Resource ID for the outer image of the joystick (the static image that shows the circular bounds).
-         * @param defaultResInner Resource ID for the default inner image of the joystick (the one you actually move around).
-         * @param pressedResInner Resource ID for the pressed inner image of the joystick.
-         * @param joystick        Identifier for which joystick this is.
-         * @param buttonId          Identifier for which joystick button this is.
-         * @param overlayControlData Identifier for determining where a button appears on screen.
-         * @param position           The position on screen as represented by an x and y value between 0 and 1.
-         * @return The initialized [InputOverlayDrawableJoystick].
-         */
         private fun initializeOverlayJoystick(
             context: Context,
             windowSize: Pair<Point, Point>,
@@ -1389,34 +1384,25 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             overlayControlData: OverlayControlData,
             position: Pair<Double, Double>
         ): InputOverlayDrawableJoystick {
-            // Resources handle for fetching the initial Drawable resource.
             val res = context.resources
 
-            // Decide scale based on user preference
             var scale = 0.3f
             scale *= (IntSetting.OVERLAY_SCALE.getInt() + 50).toFloat()
             scale /= 100f
 
-            // Apply individual scale
             scale *= overlayControlData.individualScale.let { if (it > 0f) it else 1f }
 
-            // Initialize the InputOverlayDrawableJoystick.
             val bitmapOuter = getBitmap(context, resOuter, scale)
             val bitmapInnerDefault = getBitmap(context, defaultResInner, 1.0f)
             val bitmapInnerPressed = getBitmap(context, pressedResInner, 1.0f)
 
-            // Get the minimum and maximum coordinates of the screen where the button can be placed.
             val min = windowSize.first
             val max = windowSize.second
 
-            // The X and Y coordinates of the InputOverlayDrawableButton on the InputOverlay.
-            // These were set in the input overlay configuration menu.
             val drawableX = (position.first * max.x + min.x).toInt()
             val drawableY = (position.second * max.y + min.y).toInt()
             val outerScale = 1.66f
 
-            // Now set the bounds for the InputOverlayDrawableJoystick.
-            // This will dictate where on the screen (and the what the size) the InputOverlayDrawableJoystick will be.
             val outerSize = bitmapOuter.width
             val outerRect = Rect(
                 drawableX - (outerSize / 2),
@@ -1427,7 +1413,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             val innerRect =
                 Rect(0, 0, (outerSize / outerScale).toInt(), (outerSize / outerScale).toInt())
 
-            // Send the drawableId to the joystick so it can be referenced when saving control position.
             val overlayDrawable = InputOverlayDrawableJoystick(
                 res,
                 bitmapOuter,
@@ -1440,7 +1425,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                 overlayControlData.id
             )
 
-            // Need to set the image's position
             overlayDrawable.setPosition(drawableX, drawableY)
             overlayDrawable.setOpacity(IntSetting.OVERLAY_OPACITY.getInt() * 255 / 100)
             return overlayDrawable
