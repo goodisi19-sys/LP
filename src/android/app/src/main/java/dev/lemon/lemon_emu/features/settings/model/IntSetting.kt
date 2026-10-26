@@ -81,7 +81,16 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
     INPUT_OVERLAY_AUTO_HIDE("input_overlay_auto_hide"),
     OVERLAY_GRID_SIZE("overlay_grid_size"),
     GPU_LOG_RING_BUFFER_SIZE("gpu_log_ring_buffer_size"),
-    ANDROID_PIPELINE_WORKERS("pipeline_worker_count")
+
+    // Задействуем все 6 Performance-ядер Oryon под фоновую компиляцию SPIR-V конвейеров
+    ANDROID_PIPELINE_WORKERS("pipeline_worker_count") {
+        override val defaultValue: Int = 6
+
+        override fun getInt(needsGlobal: Boolean): Int {
+            val value = runCatching { NativeConfig.getInt(key, needsGlobal) }.getOrDefault(0)
+            return if (value > 0) value else defaultValue
+        }
+    }
     ;
 
     override fun getInt(needsGlobal: Boolean): Int = NativeConfig.getInt(key, needsGlobal)
