@@ -74,16 +74,19 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
     private var hasMoved = false
     private val moveThreshold = 20f
 
-    // --- SWIPE CAMERA CONTROL (Плавающий свайп правого стика как в Android шутерах) ---
+    // --- SWIPE CAMERA CONTROL (Свайп правого стика) ---
     private var cameraPointerId: Int = -1
     private var lastCameraX: Float = 0f
     private var lastCameraY: Float = 0f
 
-    // Динамическое считывание чувствительности из меню настроек оверлея
-    private val swipeSensitivity: Float
+    // Динамический расчет чувствительности на основе ползунка из настроек
+    private val currentSwipeSensitivity: Float
         get() {
-            val userSetting = runCatching { IntSetting.OVERLAY_CAMERA_SENSITIVITY.getInt() }.getOrDefault(35)
-            return (if (userSetting > 0) userSetting else 35) / 1000f
+            val settingValue = runCatching {
+                IntSetting.OVERLAY_CAMERA_SENSITIVITY.getInt()
+            }.getOrDefault(35)
+            val effectiveValue = if (settingValue > 0) settingValue else 35
+            return effectiveValue / 1000f
         }
 
     private val cameraResetHandler = Handler(Looper.getMainLooper())
@@ -336,10 +339,9 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             invalidate()
         }
 
-        // Запоминаем текущий палец камеры перед обработкой, чтобы он не просочился в сенсор экрана
         val currentCameraFinger = cameraPointerId
 
-        // Обработка жеста свайпа правого стика (Camera Control)
+        // Обработка жеста свайпа камеры с учетом выбранной чувствительности
         handleCameraSwipe(event, playerIndex)
 
         if (!BooleanSetting.TOUCHSCREEN.getBoolean()) {
@@ -382,7 +384,7 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
 
     /**
      * Обрабатывает свободный свайп пальцем в правой половине экрана
-     * и транслирует дельту движения в координаты правого аналогового стика.
+     * и динамически масштабирует смещение согласно текущей настройке чувствительности.
      */
     private fun handleCameraSwipe(event: MotionEvent, playerIndex: Int) {
         val actionMasked = event.actionMasked
@@ -394,7 +396,7 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             MotionEvent.ACTION_POINTER_DOWN -> {
                 val x = event.getX(actionIndex)
                 val y = event.getY(actionIndex)
-                // Зона свайпа: правая часть экрана (начиная с 45% ширины экрана) в свободной от кнопок зоне
+                // Зона свайпа: правая половина экрана (от 45% ширины), не перекрытая кнопками
                 if (cameraPointerId == -1 && x > (width * 0.45f) && !isTouchInputConsumed(pointerId)) {
                     cameraPointerId = pointerId
                     lastCameraX = x
@@ -416,17 +418,15 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                         lastCameraX = currentX
                         lastCameraY = currentY
 
-                        // Фильтр микротряски пальца (deadzone меньше 0.5 пикселя)
+                        // Фильтр дрожания пальца
                         if (abs(deltaX) > 0.5f || abs(deltaY) > 0.5f) {
-                            // Нормализуем значение в диапазон [-1.0f .. 1.0f]
-                            // Ось Y инвертирована, так как в Android координаты Y растут вниз
-                            val stickX = (deltaX * swipeSensitivity).coerceIn(-1.0f, 1.0f)
-                            val stickY = (-deltaY * swipeSensitivity).coerceIn(-1.0f, 1.0f)
+                            val sensitivity = currentSwipeSensitivity
+                            val stickX = (deltaX * sensitivity).coerceIn(-1.0f, 1.0f)
+                            val stickY = (-deltaY * sensitivity).coerceIn(-1.0f, 1.0f)
 
                             sendJoystickEvent(playerIndex, NativeAnalog.RStick, stickX, stickY)
 
-                            // Если палец замер на месте без движения, через 40мс сбрасываем стик в 0,
-                            // чтобы камера не продолжала бесконечное вращение
+                            // Автосброс стика в центр при остановке пальца
                             cameraResetHandler.removeCallbacks(resetStickRunnable)
                             cameraResetHandler.postDelayed(resetStickRunnable, 40)
                         }
@@ -509,11 +509,9 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
         val fingerPositionY = event.getY(pointerIndex).toInt()
 
         for (button in overlayButtons) {
-            // Determine the button state to apply based on the MotionEvent action flag.
             when (event.action and MotionEvent.ACTION_MASK) {
                 MotionEvent.ACTION_DOWN,
                 MotionEvent.ACTION_POINTER_DOWN ->
-                    // If no button is being moved now, remember the currently touched button to move.
                     if (buttonBeingConfigured == null &&
                         button.bounds.contains(fingerPositionX, fingerPositionY)
                     ) {
@@ -563,11 +561,9 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
         }
 
         for (dpad in overlayDpads) {
-            // Determine the button state to apply based on the MotionEvent action flag.
             when (event.action and MotionEvent.ACTION_MASK) {
                 MotionEvent.ACTION_DOWN,
                 MotionEvent.ACTION_POINTER_DOWN ->
-                    // If no button is being moved now, remember the currently touched button to move.
                     if (buttonBeingConfigured == null &&
                         dpad.bounds.contains(fingerPositionX, fingerPositionY)
                     ) {
@@ -595,7 +591,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                 MotionEvent.ACTION_UP,
                 MotionEvent.ACTION_POINTER_UP -> if (dpadBeingConfigured === dpad) {
                     if (!hasMoved) {
-                        // This was a click, show scale dialog for dpad
                         showScaleDialog(
                             null,
                             dpadBeingConfigured,
@@ -604,7 +599,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
                             fingerPositionY
                         )
                     } else {
-                        // This was a move, save position
                         saveControlPosition(
                             OverlayControl.COMBINED_DPAD.id,
                             dpadBeingConfigured!!.bounds.centerX(),
@@ -926,17 +920,14 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
     }
 
     fun refreshControls(gameless: Boolean = false) {
-        // Store gameless mode if set to true
         if (gameless) {
             gamelessMode = true
         }
 
-        // Remove all the overlay buttons from the HashSet.
         overlayButtons.clear()
         overlayDpads.clear()
         overlayJoysticks.clear()
 
-        // Add all the enabled overlay items back to the HashSet.
         if (gamelessMode || BooleanSetting.SHOW_INPUT_OVERLAY.getBoolean()) {
             addOverlayControls(layout)
         }
@@ -976,7 +967,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             gamelessMode = false
         }
 
-        // Сброс свайпа камеры при смене режима
         cameraPointerId = -1
         cameraResetHandler.removeCallbacks(resetStickRunnable)
 
@@ -992,7 +982,6 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
         x: Int, y: Int
     ) {
         val overlayControlData = NativeConfig.getOverlayControlData()
-        // prevent dialog from being spam opened
         scaleDialog?.dismiss()
 
         when {
@@ -1057,21 +1046,12 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
         }
     }
 
-    /**
-     * Applies and saves all default values for the overlay
-     */
     private fun populateDefaultConfig() {
         val newConfig = OverlayControl.entries.map { it.toOverlayControlData() }
         NativeConfig.setOverlayControlData(newConfig.toTypedArray())
         NativeConfig.saveGlobalConfig()
     }
 
-    /**
-     * Checks if any new controls were added to OverlayControl that do not exist within deserialized
-     * config and adds / saves them if necessary
-     *
-     * @param overlayControlData Overlay control data from [NativeConfig.getOverlayControlData]
-     */
     private fun checkForNewControls(overlayControlData: Array<OverlayControlData>) {
         val missingControls = mutableListOf<OverlayControlData>()
         OverlayControl.entries.forEach { defaultControl ->
