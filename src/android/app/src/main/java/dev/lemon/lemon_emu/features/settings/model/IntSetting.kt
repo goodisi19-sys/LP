@@ -6,6 +6,8 @@
 
 package dev.lemon.lemon_emu.features.settings.model
 
+import androidx.preference.PreferenceManager
+import dev.lemon.lemon_emu.LemonApplication
 import dev.lemon.lemon_emu.utils.NativeConfig
 
 enum class IntSetting(override val key: String) : AbstractIntSetting {
@@ -43,10 +45,41 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
     OVERLAY_OPACITY("control_opacity"),
     OVERLAY_CAMERA_SENSITIVITY("overlay_camera_sensitivity") {
         override val defaultValue: Int = 35
+        private var memoryValue: Int = -1
+
+        private val prefs by lazy {
+            runCatching {
+                PreferenceManager.getDefaultSharedPreferences(LemonApplication.appContext)
+            }.getOrNull()
+        }
 
         override fun getInt(needsGlobal: Boolean): Int {
-            val value = runCatching { NativeConfig.getInt(key, needsGlobal) }.getOrDefault(0)
-            return if (value > 0) value else defaultValue
+            if (memoryValue > 0) return memoryValue
+            val saved = runCatching { prefs?.getInt(key, -1) ?: -1 }.getOrDefault(-1)
+            if (saved > 0) {
+                memoryValue = saved
+                return saved
+            }
+            val nativeVal = runCatching { NativeConfig.getInt(key, needsGlobal) }.getOrDefault(0)
+            if (nativeVal > 0) {
+                memoryValue = nativeVal
+                return nativeVal
+            }
+            return defaultValue
+        }
+
+        override fun setInt(value: Int) {
+            memoryValue = value
+            runCatching {
+                prefs?.edit()?.putInt(key, value)?.apply()
+            }
+            runCatching {
+                NativeConfig.setInt(key, value)
+            }
+        }
+
+        override fun reset() {
+            setInt(defaultValue)
         }
     },
     LOCK_DRAWER("lock_drawer"),
@@ -81,8 +114,6 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
     INPUT_OVERLAY_AUTO_HIDE("input_overlay_auto_hide"),
     OVERLAY_GRID_SIZE("overlay_grid_size"),
     GPU_LOG_RING_BUFFER_SIZE("gpu_log_ring_buffer_size"),
-
-    // Задействуем все 6 Performance-ядер Oryon под фоновую компиляцию SPIR-V конвейеров
     ANDROID_PIPELINE_WORKERS("pipeline_worker_count") {
         override val defaultValue: Int = 6
 
