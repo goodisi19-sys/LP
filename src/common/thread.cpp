@@ -224,15 +224,24 @@ std::vector<CoreInfo> CollectCores(const cpu_set_t& allowed, s32 total, const ch
 }
 
 bool WeightsAreUniform(const std::vector<CoreInfo>& cores) {
+    if (cores.empty()) {
+        return true;
+    }
+    const s64 first_weight = cores.front().weight;
     return std::all_of(cores.begin(), cores.end(),
-                       [&](const CoreInfo& core) { return core.weight == cores.front().weight; });
+                       [first_weight](const CoreInfo& core) { return core.weight == first_weight; });
 }
 
 bool MidrsAreDistinct(const std::vector<CoreInfo>& cores) {
-    return std::none_of(cores.begin(), cores.end(),
-                        [](const CoreInfo& core) { return core.midr == 0; }) &&
-           std::any_of(cores.begin(), cores.end(),
-                       [&](const CoreInfo& core) { return core.midr != cores.front().midr; });
+    if (cores.empty()) {
+        return false;
+    }
+    const u64 first_midr = cores.front().midr;
+    if (first_midr == 0) {
+        return false;
+    }
+    return std::any_of(cores.begin(), cores.end(),
+                       [first_midr](const CoreInfo& core) { return core.midr != 0 && core.midr != first_midr; });
 }
 
 void ComputeTopologyLocked(CpuTopologyState& state) {
@@ -269,7 +278,6 @@ void ComputeTopologyLocked(CpuTopologyState& state) {
 
     const s64 max_weight = cores.front().weight;
 
-    // Выделяем Prime ядра (ядра с наивысшей частотой/весом, например ядра 6 и 7 на Snapdragon 8 Elite)
     for (const auto& core : cores) {
         if (core.weight >= max_weight * 95 / 100) {
             CPU_SET(core.cpu, &state.prime);
@@ -277,15 +285,12 @@ void ComputeTopologyLocked(CpuTopologyState& state) {
     }
     state.has_prime = CPU_COUNT(&state.prime) > 0;
 
-    // Performance ядра (все производительные ядра, включая Prime и средние)
     for (const auto& core : cores) {
         if (core.weight >= max_weight * 70 / 100) {
             CPU_SET(core.cpu, &state.performance);
         }
     }
 
-    // Если все ядра отнесены к performance (как на Snapdragon 8 Elite: 2 Prime + 6 Perf),
-    // то Performance группа охватывает все ядра
     if (CPU_COUNT(&state.performance) == 0) {
         state.performance = state.allowed;
     }
@@ -477,7 +482,6 @@ void SetCurrentThreadPriority(ThreadPriority new_priority) {
     }
     RememberCurrentThreadNice(tid, nice_value);
 
-    // Привязываем критические потоки (GPU Render и CPU Emulation) к Prime ядрам 4.32 ГГц
     if (new_priority == ThreadPriority::VeryHigh || new_priority == ThreadPriority::Critical) {
         SetCurrentThreadCoreGroup(CoreGroup::Prime);
     } else if (new_priority == ThreadPriority::High) {
