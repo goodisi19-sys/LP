@@ -3,10 +3,6 @@
 
 name: Android build
 
-# Verifies the Android-only trim actually configures & compiles.
-# This exists because the dev sandbox that trims this repo has no
-# Android SDK/NDK/device available to test against locally.
-
 on:
   workflow_dispatch:
 
