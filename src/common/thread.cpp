@@ -41,7 +41,7 @@
 #include <unistd.h>
 #endif
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__ANDROID__)
 #include <sys/resource.h>
 #include <algorithm>
 
@@ -548,7 +548,7 @@ void SetCurrentThreadToBackgroundWork() {
 
 void SetCurrentThreadToAllCores() {
 #if defined(__ANDROID__)
-    ADPF::RemoveCurrentThread();
+    ::Common::ADPF::RemoveCurrentThread();
     SetCurrentThreadCoreGroup(CoreGroup::Unrestricted);
 #endif
 }
