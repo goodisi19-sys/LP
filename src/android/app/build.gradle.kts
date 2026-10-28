@@ -90,7 +90,7 @@ android {
                 arguments.addAll(
                     listOf(
                         "-DENABLE_QT=0", // Don't use QT
-                        "-DENABLE_WEB_SERVICE=1", // Enable web service
+                        "-DENABLE_WEB_SERVICE=0", // Отключаем мертвые сервисы телеметрии
                         "-DANDROID_ARM_NEON=true", // cryptopp requires Neon to work
                         "-DYUZU_USE_CPM=ON",
                         "-DCPMUTIL_FORCE_BUNDLED=ON",
@@ -104,8 +104,6 @@ android {
                 )
 
                 // Безопасный набор аппаратных оптимизаций под Snapdragon 8 Elite:
-                // Включает аппаратную полуторочную точность (FP16), целочисленный DotProduct,
-                // криптографию и уровень O3, исключая SVE2 и ThinLTO для предотвращения краша Boost.Context
                 cppFlags.addAll(
                     listOf(
                         "-march=armv8.4-a+crypto+fp16+dotprod",
@@ -229,96 +227,6 @@ android {
 
             manifestPlaceholders += mapOf("appNameBase" to "Lemon")
             resValue("string", "app_name_suffixed", "Lemon")
-
-            ndk {
-                abiFilters += listOf("arm64-v8a")
-            }
-        }
-
-        create("lite") {
-            dimension = "version"
-            minSdk = 31
-            manifestPlaceholders += mapOf("appNameBase" to "Lemon Lite")
-            resValue("string", "app_name_suffixed", "Lemon Lite")
-            applicationId = "dev.lemon.lemon_emulator.lite"
-
-            externalNativeBuild {
-                cmake {
-                    arguments.add("-DLEMON_LITE=ON")
-                }
-            }
-            buildConfigField("boolean", "LITE", "true")
-            sourceSets {
-                getByName("lite") {
-                    res.srcDirs("src/liteShared/res")
-                }
-            }
-
-            ndk {
-                abiFilters += listOf("arm64-v8a")
-            }
-        }
-
-        create("liteSpoofed") {
-            dimension = "version"
-            minSdk = 31
-            manifestPlaceholders += mapOf("appNameBase" to "Lemon Lite Spoofed")
-            resValue("string", "app_name_suffixed", "Lemon Lite Spoofed")
-            applicationId = "com.antutu.ABenchMark"
-
-            externalNativeBuild {
-                cmake {
-                    arguments.addAll(listOf("-DLEMON_LITE=ON", "-DLEMON_SPOOFED=ON"))
-                }
-            }
-            buildConfigField("boolean", "LITE", "true")
-            sourceSets {
-                getByName("liteSpoofed") {
-                    res.srcDirs("src/liteShared/res")
-                }
-            }
-
-            ndk {
-                abiFilters += listOf("arm64-v8a")
-            }
-        }
-
-        create("genshinSpoof") {
-            dimension = "version"
-            minSdk = 35
-            manifestPlaceholders += mapOf("appNameBase" to "Lemon Optimized")
-            resValue("string", "app_name_suffixed", "Lemon Optimized")
-            applicationId = "com.miHoYo.Yuanshen"
-
-            externalNativeBuild {
-                cmake {
-                    arguments.add("-DGENSHIN_SPOOF=ON")
-                }
-            }
-
-            ndk {
-                abiFilters += listOf("arm64-v8a")
-            }
-        }
-
-        create("legacy") {
-            dimension = "version"
-            minSdk = 29
-            manifestPlaceholders += mapOf("appNameBase" to "Lemon Legacy")
-            resValue("string", "app_name_suffixed", "Lemon Legacy")
-            applicationId = "dev.legacy.lemon_emulator"
-
-            externalNativeBuild {
-                cmake {
-                    arguments.add("-DYUZU_LEGACY=ON")
-                }
-            }
-
-            sourceSets {
-                getByName("legacy") {
-                    res.srcDirs("src/main/legacy")
-                }
-            }
 
             ndk {
                 abiFilters += listOf("arm64-v8a")
