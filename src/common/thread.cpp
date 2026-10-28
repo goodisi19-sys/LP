@@ -223,7 +223,7 @@ std::vector<CoreInfo> CollectCores(const cpu_set_t& allowed, s32 total, const ch
     return cores;
 }
 
-bool WeightsAreUniform(const std::vector<CoreInfo>& cores) {
+[[maybe_unused]] bool WeightsAreUniform(const std::vector<CoreInfo>& cores) {
     if (cores.empty()) {
         return true;
     }
@@ -232,7 +232,7 @@ bool WeightsAreUniform(const std::vector<CoreInfo>& cores) {
                        [first_weight](const CoreInfo& core) { return core.weight == first_weight; });
 }
 
-bool MidrsAreDistinct(const std::vector<CoreInfo>& cores) {
+[[maybe_unused]] bool MidrsAreDistinct(const std::vector<CoreInfo>& cores) {
     if (cores.empty()) {
         return false;
     }
