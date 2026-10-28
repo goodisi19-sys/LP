@@ -29,7 +29,9 @@ bool IsZBIC(std::span<const u8> src) {
     }
     u32 magic = 0;
     std::memcpy(&magic, src.data(), sizeof(u32));
-    return magic == ZSTD_MAGICNUMBER; // 0x4349425A ("ZBIC")
+    // ZBIC magic: "ZBIC" -> 0x4349425A in little-endian
+    constexpr u32 ZBIC_MAGICNUMBER = 0x4349425A;
+    return magic == ZBIC_MAGICNUMBER;
 }
 
 int DecompressDataZBIC(std::span<u8> dst, std::span<const u8> src) {
