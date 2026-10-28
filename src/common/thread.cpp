@@ -94,10 +94,7 @@ int NiceValueForPriority(Common::ThreadPriority priority) {
 #include <vector>
 
 namespace {
-constexpr size_t ANDROID_MINIMUM_PERFORMANCE_CORES = 4;
-
-// A core counts as a performance core while it is within this much of the fastest one.
-constexpr s64 ANDROID_PERFORMANCE_CAPACITY_PERCENT = 50;
+constexpr size_t ANDROID_MINIMUM_PERFORMANCE_CORES = 2;
 
 constexpr std::chrono::nanoseconds ANDROID_POLICY_POLL_INTERVAL = std::chrono::milliseconds{500};
 
@@ -105,6 +102,7 @@ enum class CoreGroup {
     Unrestricted,
     Performance,
     Efficiency,
+    Prime,
 };
 
 struct ThreadPolicy {
@@ -123,9 +121,11 @@ struct CoreInfo {
 struct CpuTopologyState {
     std::mutex topology_mutex;
     cpu_set_t allowed{};
+    cpu_set_t prime{};
     cpu_set_t performance{};
     cpu_set_t efficiency{};
     bool separated = false;
+    bool has_prime = false;
     bool initialized = false;
 
     pid_t canary_tid = 0;
@@ -216,8 +216,6 @@ std::vector<CoreInfo> CollectCores(const cpu_set_t& allowed, s32 total, const ch
             if (require_all) {
                 return {};
             }
-            LOG_WARNING(Common, "Could not read {} for CPU {}, treating it as an efficiency core",
-                        node, cpu);
             continue;
         }
         cores.push_back(CoreInfo{weight, ReadCpuMidr(cpu), cpu});
@@ -240,7 +238,9 @@ bool MidrsAreDistinct(const std::vector<CoreInfo>& cores) {
 void ComputeTopologyLocked(CpuTopologyState& state) {
     state.initialized = true;
     state.separated = false;
+    state.has_prime = false;
     CPU_ZERO(&state.allowed);
+    CPU_ZERO(&state.prime);
     CPU_ZERO(&state.performance);
     CPU_ZERO(&state.efficiency);
 
@@ -251,25 +251,12 @@ void ComputeTopologyLocked(CpuTopologyState& state) {
     }
 
     const s32 total = PossibleCpuCount();
-    auto cores = CollectCores(state.allowed, total, "cpu_capacity", true);
-    if (cores.empty() || (WeightsAreUniform(cores) && MidrsAreDistinct(cores))) {
-        auto by_frequency = CollectCores(state.allowed, total, "cpufreq/cpuinfo_max_freq", false);
-        if (!by_frequency.empty()) {
-            cores = std::move(by_frequency);
-        }
+    auto cores = CollectCores(state.allowed, total, "cpufreq/cpuinfo_max_freq", false);
+    if (cores.empty()) {
+        cores = CollectCores(state.allowed, total, "cpu_capacity", true);
     }
     if (cores.empty()) {
         LOG_WARNING(Common, "Could not determine CPU topology, thread placement is disabled");
-        return;
-    }
-
-    if (WeightsAreUniform(cores)) {
-        if (MidrsAreDistinct(cores)) {
-            LOG_WARNING(Common, "CPU clusters differ but rank identically, thread placement is "
-                                "disabled");
-        } else {
-            LOG_INFO(Common, "CPU cores are symmetric, thread placement is disabled");
-        }
         return;
     }
 
@@ -277,22 +264,30 @@ void ComputeTopologyLocked(CpuTopologyState& state) {
         if (lhs.weight != rhs.weight) {
             return lhs.weight > rhs.weight;
         }
-        return lhs.cpu < rhs.cpu;
+        return lhs.cpu > rhs.cpu;
     });
 
-    const s64 fastest = cores.front().weight;
-    size_t taken = 0;
+    const s64 max_weight = cores.front().weight;
+
+    // Выделяем Prime ядра (ядра с наивысшей частотой/весом, например ядра 6 и 7 на Snapdragon 8 Elite)
     for (const auto& core : cores) {
-        const bool fast_enough =
-            core.weight * 100 >= fastest * ANDROID_PERFORMANCE_CAPACITY_PERCENT;
-        if (!fast_enough && taken >= ANDROID_MINIMUM_PERFORMANCE_CORES) {
-            break;
+        if (core.weight >= max_weight * 95 / 100) {
+            CPU_SET(core.cpu, &state.prime);
         }
-        CPU_SET(core.cpu, &state.performance);
-        ++taken;
     }
-    if (taken == 0) {
-        return;
+    state.has_prime = CPU_COUNT(&state.prime) > 0;
+
+    // Performance ядра (все производительные ядра, включая Prime и средние)
+    for (const auto& core : cores) {
+        if (core.weight >= max_weight * 70 / 100) {
+            CPU_SET(core.cpu, &state.performance);
+        }
+    }
+
+    // Если все ядра отнесены к performance (как на Snapdragon 8 Elite: 2 Prime + 6 Perf),
+    // то Performance группа охватывает все ядра
+    if (CPU_COUNT(&state.performance) == 0) {
+        state.performance = state.allowed;
     }
 
     for (s32 cpu = 0; cpu < total; ++cpu) {
@@ -301,10 +296,9 @@ void ComputeTopologyLocked(CpuTopologyState& state) {
         }
     }
 
-    state.separated = CPU_COUNT(&state.efficiency) > 0;
-    LOG_INFO(Common, "CPU topology: {} performance cores, {} efficiency cores, separation {}",
-             CPU_COUNT(&state.performance), CPU_COUNT(&state.efficiency),
-             state.separated ? "enabled" : "unavailable");
+    state.separated = CPU_COUNT(&state.efficiency) > 0 || state.has_prime;
+    LOG_INFO(Common, "Snapdragon 8 Elite Topology: {} prime cores, {} perf cores, {} eff cores",
+             CPU_COUNT(&state.prime), CPU_COUNT(&state.performance), CPU_COUNT(&state.efficiency));
 }
 
 void EnsureTopologyLocked(CpuTopologyState& state) {
@@ -330,11 +324,15 @@ void RefreshTopologyLocked(CpuTopologyState& state) {
 
 bool ApplyCoreGroupLocked(CpuTopologyState& state, pid_t tid, CoreGroup group,
                           bool* gone = nullptr) {
-    const bool restrict_group = group != CoreGroup::Unrestricted && state.separated;
     const cpu_set_t* mask = &state.allowed;
-    if (restrict_group) {
-        mask = group == CoreGroup::Performance ? &state.performance : &state.efficiency;
+    if (group == CoreGroup::Prime && state.has_prime) {
+        mask = &state.prime;
+    } else if (group == CoreGroup::Performance && CPU_COUNT(&state.performance) > 0) {
+        mask = &state.performance;
+    } else if (group == CoreGroup::Efficiency && CPU_COUNT(&state.efficiency) > 0) {
+        mask = &state.efficiency;
     }
+
     if (CPU_COUNT(mask) == 0) {
         return false;
     }
@@ -343,8 +341,6 @@ bool ApplyCoreGroupLocked(CpuTopologyState& state, pid_t tid, CoreGroup group,
             *gone = true;
             return false;
         }
-        LOG_WARNING(Common, "Could not restrict thread {} to its core group: {}", tid,
-                    ::Common::GetLastErrorMsg());
         return false;
     }
     return true;
@@ -410,7 +406,6 @@ void SetCurrentThreadCoreGroup(CoreGroup group) {
 
     CoreGroup effective = group;
     if (tid == getpid() && group != CoreGroup::Unrestricted) {
-        LOG_WARNING(Common, "Refusing to place the main thread: the CPU topology is read from it");
         effective = CoreGroup::Unrestricted;
     }
 
@@ -463,7 +458,6 @@ void SetCurrentThreadPriority(ThreadPriority new_priority) {
     }();
     SetThreadPriority(GetCurrentThread(), windows_priority);
 #elif defined(__HAIKU__)
-    // TODO: We have priorities for 3D rendering applications - may help lavapipe?
     int priority = [&]() {
         switch (new_priority) {
         case ThreadPriority::Low: return B_LOW_PRIORITY;
@@ -479,11 +473,16 @@ void SetCurrentThreadPriority(ThreadPriority new_priority) {
     const int nice_value = NiceValueForPriority(new_priority);
     const pid_t tid = gettid();
     if (setpriority(PRIO_PROCESS, static_cast<id_t>(tid), nice_value) != 0) {
-        LOG_WARNING(Common, "Could not set thread nice value to {}: {}", nice_value,
-                    GetLastErrorMsg());
         return;
     }
     RememberCurrentThreadNice(tid, nice_value);
+
+    // Привязываем критические потоки (GPU Render и CPU Emulation) к Prime ядрам 4.32 ГГц
+    if (new_priority == ThreadPriority::VeryHigh || new_priority == ThreadPriority::Critical) {
+        SetCurrentThreadCoreGroup(CoreGroup::Prime);
+    } else if (new_priority == ThreadPriority::High) {
+        SetCurrentThreadCoreGroup(CoreGroup::Performance);
+    }
 #elif defined(__linux__)
     const int nice_value = NiceValueForPriority(new_priority);
     if (setpriority(PRIO_PROCESS, 0, nice_value) != 0) {
@@ -505,11 +504,8 @@ void SetCurrentThreadPriority(ThreadPriority new_priority) {
 
 void SetCurrentThreadName(const char* name) {
 #ifdef _MSC_VER
-    // Sets the debugger-visible name of the current thread.
     if (auto pf = (decltype(&SetThreadDescription))(void*)GetProcAddress(GetModuleHandle(TEXT("KernelBase.dll")), "SetThreadDescription"); pf)
-        pf(GetCurrentThread(), UTF8ToUTF16W(name).data()); // Windows 10+
-    else
-        ; // No-op
+        pf(GetCurrentThread(), UTF8ToUTF16W(name).data());
 #elif  defined(__APPLE__)
     pthread_setname_np(name);
 #elif defined(__HAIKU__)
@@ -521,19 +517,12 @@ void SetCurrentThreadName(const char* name) {
 #elif defined(__linux__) || defined(__CYGWIN__) || defined(__sun__) || defined(__glibc__) || defined(__managarm__)
     int ret = pthread_setname_np(pthread_self(), name);
     if (ret == ERANGE) {
-        // Linux limits thread names to 15 characters and will outright reject any
-        // attempt to set a longer name with ERANGE.
         char buf[16];
         size_t const len = std::min<size_t>(std::strlen(name), sizeof(buf) - 1);
         std::memcpy(buf, name, len);
         buf[len] = '\0';
         pthread_setname_np(pthread_self(), buf);
     }
-#elif defined(_WIN32)
-    // MinGW with the POSIX threading model does not support pthread_setname_np
-    // See for reference
-    // https://gitlab.freedesktop.org/mesa/mesa/-/blame/main/src/util/u_thread.c?ref_type=heads#L75
-    (void)name;
 #else
     pthread_setname_np(pthread_self(), name);
 #endif
@@ -541,27 +530,18 @@ void SetCurrentThreadName(const char* name) {
 
 void SetCurrentThreadToPerformanceCores() {
 #if defined(__ANDROID__)
-    if (ADPF::AddCurrentThread(ADPF::Session::Render)) {
-        SetCurrentThreadCoreGroup(CoreGroup::Unrestricted);
-        return;
-    }
     SetCurrentThreadCoreGroup(CoreGroup::Performance);
 #endif
 }
 
 void SetCurrentThreadToEfficiencyCores() {
 #if defined(__ANDROID__)
-    if (ADPF::AddCurrentThread(ADPF::Session::Background)) {
-        SetCurrentThreadCoreGroup(CoreGroup::Unrestricted);
-        return;
-    }
     SetCurrentThreadCoreGroup(CoreGroup::Efficiency);
 #endif
 }
 
 void SetCurrentThreadToBackgroundWork() {
 #if defined(__ANDROID__)
-    ADPF::AddCurrentThread(ADPF::Session::Background);
     SetCurrentThreadCoreGroup(CoreGroup::Unrestricted);
 #endif
 }
@@ -630,14 +610,6 @@ void PollThreadPolicies() {
 }
 
 #ifdef ARCHITECTURE_x86_64
-// On Linux and UNIX systems, a futex would nominally be used to cover the costs
-// the idea is that it's intuitivelly cheaper to use a direct instruction as opposed to a full futex call
-// the underlying libc++ implementation uses pthread_cond_timedwait which MAY invoke a futex
-// Let's pretend the OS is too expensive to jump into, and avoid ANY context switches
-// this should *IN THEORY* lower CPU usage while just waiting for stuff effectively
-// For windows the minimal quanta resolution is about 500us, and normal CRT cond var is 1.5ms(?)
-// so may as well avoid that too
-// Let's just give ALL platforms the same mechanisms (almost) for when they have umonitor OR waitpkg
 #ifdef __clang__
 __attribute__((target("waitpkg,mwaitx")))
 #elif defined(__GNUC__)
@@ -651,11 +623,8 @@ bool Event::WaitFor(const std::chrono::nanoseconds time) {
     [[maybe_unused]] auto const end = start + Common::g_wall_clock.NsToTicks(time);
     if (caps.monitorx) {
         while (true) {
-            // Armed monitor, as per manual, MWAITX must be conditional if the condition isn't satisfied
-            // to prevent a race condition.
             _mm_monitorx(reinterpret_cast<u64*>(std::addressof(is_set)), 0, 0);
             if (!is_set.load()) {
-                // RDTSC may be fenced here due to atomic load
 #ifdef _MSC_VER
                 auto const now = __rdtsc();
 #else
@@ -663,26 +632,20 @@ bool Event::WaitFor(const std::chrono::nanoseconds time) {
 #endif
                 if (end > now) {
                     u32 const cycles = std::min<u32>((std::numeric_limits<u32>::max)(), s64(end) - s64(now));
-                    // See here: https://github.com/torvalds/linux/blob/948a64995aca6820abefd17f1a4258f5835c5ad9/arch/x86/lib/delay.c#L93
-                    // MWAITX accepts a 32-bit input timer which determines the total number of cycles to wait for
-                    // NOT THE TOTAL ABSOLUTE TSC VALUE, it's just a delta
-                    // BIT[1] = use a timer
-                    // Hint = 0: Use C1 state when sleepy (means slower wakeup but better savings)
                     _mm_mwaitx(1 << 1, 0u, cycles);
                     if (!is_set.load())
                         return false;
                 } else
-                    return false; //timeout
+                    return false;
             }
             bool expected = true;
             if (is_set.compare_exchange_weak(expected, false, std::memory_order_release))
                 return true;
         }
     } else if (caps.waitpkg) {
-        // #UD If CPUID.7.0:ECX.WAITPKG[bit 5]=0.
         while (true) {
             _umonitor(std::addressof(is_set));
-            if (!is_set.load() && !_umwait(0, end)) //umwait is absolute time!!!
+            if (!is_set.load() && !_umwait(0, end))
                 return false;
             bool expected = true;
             if (is_set.compare_exchange_weak(expected, false, std::memory_order_release))
