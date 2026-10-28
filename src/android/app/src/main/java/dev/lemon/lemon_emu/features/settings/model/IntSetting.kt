@@ -11,15 +11,55 @@ import dev.lemon.lemon_emu.LemonApplication
 import dev.lemon.lemon_emu.utils.NativeConfig
 
 enum class IntSetting(override val key: String) : AbstractIntSetting {
-    CPU_BACKEND("cpu_backend"),
-    CPU_ACCURACY("cpu_accuracy"),
+    // 1 = NCE (Native Code Execution) - прямое выполнение инструкций на ядрах Oryon
+    CPU_BACKEND("cpu_backend") {
+        override val defaultValue: Int = 1
+
+        override fun getInt(needsGlobal: Boolean): Int {
+            val value = runCatching { NativeConfig.getInt(key, needsGlobal) }.getOrDefault(-1)
+            return if (value >= 0) value else defaultValue
+        }
+    },
+    // 0 = Auto / Fast accuracy (без лишних тормозящих проверок флагов CPU)
+    CPU_ACCURACY("cpu_accuracy") {
+        override val defaultValue: Int = 0
+
+        override fun getInt(needsGlobal: Boolean): Int {
+            val value = runCatching { NativeConfig.getInt(key, needsGlobal) }.getOrDefault(-1)
+            return if (value >= 0) value else defaultValue
+        }
+    },
     REGION_INDEX("region_index"),
     LANGUAGE_INDEX("language_index"),
     RENDERER_BACKEND("backend"),
-    RENDERER_VRAM_USAGE_MODE("vram_usage_mode"),
+    // 0 = Conservative (держит кэш текстур в 12 ГБ памяти, убирая микрофризы)
+    RENDERER_VRAM_USAGE_MODE("vram_usage_mode") {
+        override val defaultValue: Int = 0
+
+        override fun getInt(needsGlobal: Boolean): Int {
+            val value = runCatching { NativeConfig.getInt(key, needsGlobal) }.getOrDefault(-1)
+            return if (value >= 0) value else defaultValue
+        }
+    },
     RENDERER_NVDEC_EMULATION("nvdec_emulation"),
-    RENDERER_ASTC_DECODE_METHOD("accelerate_astc"),
-    RENDERER_ACCURACY("gpu_accuracy"),
+    // 0 = Аппаратный нативный ASTC декодер Adreno (без тяжелых Compute-шейдеров)
+    RENDERER_ASTC_DECODE_METHOD("accelerate_astc") {
+        override val defaultValue: Int = 0
+
+        override fun getInt(needsGlobal: Boolean): Int {
+            val value = runCatching { NativeConfig.getInt(key, needsGlobal) }.getOrDefault(-1)
+            return if (value >= 0) value else defaultValue
+        }
+    },
+    // 0 = Normal GPU Accuracy (высокий фреймрейт без просадок)
+    RENDERER_ACCURACY("gpu_accuracy") {
+        override val defaultValue: Int = 0
+
+        override fun getInt(needsGlobal: Boolean): Int {
+            val value = runCatching { NativeConfig.getInt(key, needsGlobal) }.getOrDefault(-1)
+            return if (value >= 0) value else defaultValue
+        }
+    },
     RENDERER_RESOLUTION("resolution_setup"),
     RENDERER_FRAME_GEN_ENGINE("frame_gen_engine"),
     RENDERER_FRAME_GEN_MULTIPLIER("frame_gen_multiplier"),
@@ -43,6 +83,8 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
     APP_LANGUAGE("app_language"),
     OVERLAY_SCALE("control_scale"),
     OVERLAY_OPACITY("control_opacity"),
+
+    // Ползунок чувствительности свайп-камеры с сохранением в SharedPreferences
     OVERLAY_CAMERA_SENSITIVITY("overlay_camera_sensitivity") {
         override val defaultValue: Int = 35
         private var memoryValue: Int = -1
@@ -114,6 +156,8 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
     INPUT_OVERLAY_AUTO_HIDE("input_overlay_auto_hide"),
     OVERLAY_GRID_SIZE("overlay_grid_size"),
     GPU_LOG_RING_BUFFER_SIZE("gpu_log_ring_buffer_size"),
+
+    // Задействуем все 6 Performance-ядер Oryon под фоновую компиляцию SPIR-V конвейеров
     ANDROID_PIPELINE_WORKERS("pipeline_worker_count") {
         override val defaultValue: Int = 6
 
