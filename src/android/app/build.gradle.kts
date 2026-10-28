@@ -232,6 +232,60 @@ android {
                 abiFilters += listOf("arm64-v8a")
             }
         }
+
+        create("genshinSpoof") {
+            dimension = "version"
+            minSdk = 31
+            applicationId = "com.miHoYo.Yuanshen"
+
+            manifestPlaceholders += mapOf("appNameBase" to "Lemon")
+            resValue("string", "app_name_suffixed", "Lemon")
+
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+            }
+        }
+
+        create("lite") {
+            dimension = "version"
+            minSdk = 29
+            applicationId = "dev.lemon.lemon_emulator.lite"
+            buildConfigField("boolean", "LITE", "true")
+
+            manifestPlaceholders += mapOf("appNameBase" to "Lemon Lite")
+            resValue("string", "app_name_suffixed", "Lemon Lite")
+
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+            }
+        }
+
+        create("liteSpoofed") {
+            dimension = "version"
+            minSdk = 29
+            applicationId = "com.antutu.ABenchMark"
+            buildConfigField("boolean", "LITE", "true")
+
+            manifestPlaceholders += mapOf("appNameBase" to "Lemon Lite")
+            resValue("string", "app_name_suffixed", "Lemon Lite")
+
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+            }
+        }
+
+        create("legacy") {
+            dimension = "version"
+            minSdk = 24
+            applicationId = "dev.lemon.lemon_emulator.legacy"
+
+            manifestPlaceholders += mapOf("appNameBase" to "Lemon Legacy")
+            resValue("string", "app_name_suffixed", "Lemon Legacy")
+
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+            }
+        }
     }
 
     externalNativeBuild {
