@@ -94,7 +94,7 @@ int NiceValueForPriority(Common::ThreadPriority priority) {
 #include <vector>
 
 namespace {
-constexpr size_t ANDROID_MINIMUM_PERFORMANCE_CORES = 2;
+[[maybe_unused]] constexpr size_t ANDROID_MINIMUM_PERFORMANCE_CORES = 2;
 
 constexpr std::chrono::nanoseconds ANDROID_POLICY_POLL_INTERVAL = std::chrono::milliseconds{500};
 
