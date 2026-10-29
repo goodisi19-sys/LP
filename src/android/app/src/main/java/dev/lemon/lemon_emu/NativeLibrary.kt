@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2026 Lemon-Project
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
-
-// SPDX-FileCopyrightText: 2023 yuzu Emulator Project
+​// SPDX-FileCopyrightText: 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
-
-package dev.lemon.lemon_emu
-
-import android.content.DialogInterface
+​package dev.lemon.lemon_emu
+​import android.content.DialogInterface
 import android.net.Uri
 import android.text.Html
 import android.text.method.LinkMovementMethod
@@ -29,12 +26,9 @@ import dev.lemon.lemon_emu.model.Patch
 import dev.lemon.lemon_emu.model.GameVerificationResult
 import dev.lemon.lemon_emu.network.NetPlayManager
 import dev.lemon.lemon_emu.applets.web.WebBrowser
-
-/
-
-Class which contains methods that interact
-
-with the native side of the Lemon code.
+​/
+​Class which contains methods that interact
+​with the native side of the Lemon code.
 */
 object NativeLibrary {
 @Keep
@@ -43,17 +37,15 @@ var tag: String = "",
 var title: String = "",
 var body: String = "",
 var url: String = "",
-var assets: MutableList = mutableListOf()
+var assets: MutableList<String> = mutableListOf()
 ) {
 fun addAsset(asset: String) {
 assets.add(asset)
 }
 }
-
-@JvmField
+​@JvmField
 var sEmulationActivity = WeakReference<EmulationActivity?>(null)
-
-init {
+​init {
 try {
 System.loadLibrary("lemon-android")
 SDL.setupJNI()
@@ -62,12 +54,10 @@ initJvm()
 error("[NativeLibrary] $ex")
 }
 }
-
-@Keep
+​@Keep
 @JvmStatic
 external fun getGameBuildId(path: String): String
-
-@Keep
+​@Keep
 @JvmStatic
 fun openContentUri(path: String?, openmode: String?): Int {
 return if (DocumentsTree.isNativePath(path!!)) {
@@ -76,8 +66,7 @@ LemonApplication.documentsTree!!.openContentUri(path, openmode)
 FileUtil.openContentUri(path, openmode)
 }
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun getSize(path: String?): Long {
 return if (DocumentsTree.isNativePath(path!!)) {
@@ -86,8 +75,7 @@ LemonApplication.documentsTree!!.getFileSize(path)
 FileUtil.getFileSize(path)
 }
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun exists(path: String?): Boolean {
 return if (DocumentsTree.isNativePath(path!!)) {
@@ -96,8 +84,7 @@ LemonApplication.documentsTree!!.exists(path)
 FileUtil.exists(path, suppressLog = true)
 }
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun isDirectory(path: String?): Boolean {
 return if (DocumentsTree.isNativePath(path!!)) {
@@ -106,8 +93,7 @@ LemonApplication.documentsTree!!.isDirectory(path)
 FileUtil.isDirectory(path)
 }
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun getParentDirectory(path: String): String =
 if (DocumentsTree.isNativePath(path)) {
@@ -115,8 +101,7 @@ LemonApplication.documentsTree!!.getParentDirectory(path)
 } else {
 path
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun getFilename(path: String): String =
 if (DocumentsTree.isNativePath(path)) {
@@ -124,8 +109,7 @@ LemonApplication.documentsTree!!.getFilename(path)
 } else {
 FileUtil.getFilename(Uri.parse(path))
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun copyFileToStorage(source: String, destdir: String): Boolean {
 return FileUtil.copyUriToInternalStorage(
@@ -133,160 +117,104 @@ source.toUri(),
 destdir
 ) != null
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun getFileExtension(source: String): String {
 return FileUtil.getExtension(source.toUri())
 }
-
-external fun setAppDirectory(directory: String)
-
-/
-
-Installs a nsp or xci file to nand
-
-@param filename String representation of file uri
-
-@return int representation of [InstallResult]
+​external fun setAppDirectory(directory: String)
+​/
+​Installs a nsp or xci file to nand
+​@param filename String representation of file uri
+​@return int representation of [InstallResult]
 */
 external fun installFileToNand(
 filename: String,
 callback: (max: Long, progress: Long) -> Boolean
 ): Int
-
-external fun doesUpdateMatchProgram(programId: String, updatePath: String): Boolean
-
-external fun initializeGpuDriver(
+​external fun doesUpdateMatchProgram(programId: String, updatePath: String): Boolean
+​external fun initializeGpuDriver(
 hookLibDir: String?,
 customDriverDir: String?,
 customDriverName: String?,
 fileRedirectDir: String?
 )
-
-external fun reloadKeys(): Boolean
-
-external fun initializeSystem(reload: Boolean)
-
-/
-
-Begins emulation.
+​external fun reloadKeys(): Boolean
+​external fun initializeSystem(reload: Boolean)
+​/
+​Begins emulation.
 */
 external fun run(path: String?, programIndex: Int, frontendInitiated: Boolean)
-
-/
-
-Hands the signed-in Nextendo Network account to the emulated account service. Kept in
-
-memory only; the PID and the token are credentials and must never be logged.
+​/
+​Hands the signed-in Nextendo Network account to the emulated account service. Kept in
+​memory only; the PID and the token are credentials and must never be logged.
 */
 external fun setNextendoSession(pid: Long, username: String, nexToken: String)
-
-external fun clearNextendoSession()
-
-// Surface Handling
+​external fun clearNextendoSession()
+​// Surface Handling
 external fun surfaceChanged(surf: Surface?)
-
-external fun surfaceDestroyed()
-
-external fun getAppletCaptureBuffer(): ByteArray
+​external fun surfaceDestroyed()
+​external fun getAppletCaptureBuffer(): ByteArray
 external fun getAppletCaptureWidth(): Int
 external fun getAppletCaptureHeight(): Int
-
-/
-
-Unpauses emulation from a paused state.
+​/
+​Unpauses emulation from a paused state.
 */
 external fun unpauseEmulation()
-
-/
-
-Pauses emulation.
+​/
+​Pauses emulation.
 */
 external fun pauseEmulation()
-
-/
-
-Captures CPU register state and process memory to a single quicksave slot.
-
-Same-session only - does not survive closing the game. Returns one of the QUICK_SAVE_*
-
-results; it can wait up to about three seconds for a safe moment.
+​/
+​Captures CPU register state and process memory to a single quicksave slot.
+​Same-session only - does not survive closing the game. Returns one of the QUICK_SAVE_*
+​results; it can wait up to about three seconds for a safe moment.
 */
 external fun quickSaveState(): Int
-
-const val QUICK_SAVE_FAILED = 0 // the save could not be written
-const val QUICK_SAVE_SAVED = 1 // saved
-const val QUICK_SAVE_NO_SAFE_MOMENT = 2 // a lock handoff never ended; nothing was saved
-
-/
-
-Restores CPU register state and process memory from the quicksave slot. Returns one of the
-
-QUICK_LOAD_* results.
+​const val QUICK_SAVE_FAILED = 0
+const val QUICK_SAVE_SAVED = 1
+const val QUICK_SAVE_NO_SAFE_MOMENT = 2
+​/
+​Restores CPU register state and process memory from the quicksave slot. Returns one of the
+​QUICK_LOAD_* results.
 */
 external fun quickLoadState(): Int
-
-const val QUICK_LOAD_FAILED = 0 // nothing was restored
-const val QUICK_LOAD_LOADED = 1 // restored
-const val QUICK_LOAD_INCOMPATIBLE = 2 // refused: a change since the save cannot be undone
-const val QUICK_LOAD_NO_SAFE_MOMENT = 3 // a lock handoff never ended; nothing was changed
-const val QUICK_LOAD_GAME_LOADING = 4 // threads of the save are not back yet; nothing was changed
-const val QUICK_LOAD_NOT_THIS_SESSION = 5 // no save made since the game started
-
-/
-
-Scans all live guest process memory for a 4-byte value. [valueType] 0 reads memory as a
-
-signed integer and looks for an exact match of [needleValue]. [valueType] 1 reads it as a
-
-float: [needleValue] then holds the float's raw bits, and any stored float within
-
-[tolerance] of it matches (0 = bit-exact).
-
-Returns matches interleaved as [addr0, value0, addr1, value1, ...] (capped internally to
-
-a sane limit; each value is the raw 32 bits) - decode with CheatOverlay's decodeMatches().
+​const val QUICK_LOAD_FAILED = 0
+const val QUICK_LOAD_LOADED = 1
+const val QUICK_LOAD_INCOMPATIBLE = 2
+const val QUICK_LOAD_NO_SAFE_MOMENT = 3
+const val QUICK_LOAD_GAME_LOADING = 4
+const val QUICK_LOAD_NOT_THIS_SESSION = 5
+​/
+​Scans all live guest process memory for a 4-byte value. [valueType] 0 reads memory as a
+​signed integer and looks for an exact match of [needleValue]. [valueType] 1 reads it as a
+​float: [needleValue] then holds the float's raw bits, and any stored float within
+​[tolerance] of it matches (0 = bit-exact).
+​Returns matches interleaved as [addr0, value0, addr1, value1, ...] (capped internally to
+​a sane limit; each value is the raw 32 bits) - decode with CheatOverlay's decodeMatches().
 */
 external fun cheatSearch(needleValue: Int, valueType: Int, tolerance: Float): LongArray
-
-/
-
-"Blind search" step 1: snapshots current guest memory for a later [cheatCompareSnapshot]
-
-call, for when the caller doesn't know an exact value to search for yet.
+​/
+​"Blind search" step 1: snapshots current guest memory for a later [cheatCompareSnapshot]
+​call, for when the caller doesn't know an exact value to search for yet.
 */
 external fun cheatTakeSnapshot()
-
-/
-
-"Blind search" step 2: compares live memory against the snapshot taken by
-
-[cheatTakeSnapshot] and returns every address whose value satisfies [comparison]
-
-(0 = increased, 1 = decreased, 2 = unchanged) relative to the snapshotted value there.
-
-Interleaved like [cheatSearch]. Consumes the snapshot - only callable once per
-
-[cheatTakeSnapshot]. [valueType] is 0 for integers, 1 for floats.
+​/
+​"Blind search" step 2: compares live memory against the snapshot taken by
+​[cheatTakeSnapshot] and returns every address whose value satisfies [comparison]
+​(0 = increased, 1 = decreased, 2 = unchanged) relative to the snapshotted value there.
+​Interleaved like [cheatSearch]. Consumes the snapshot - only callable once per
+​[cheatTakeSnapshot]. [valueType] is 0 for integers, 1 for floats.
 */
 external fun cheatCompareSnapshot(comparison: Int, valueType: Int): LongArray
-
-/
-
-Narrows [candidates] (interleaved like [cheatSearch]'s return) down to just the ones
-
-that still qualify - the "next scan" step. If [comparison] is -1, keeps addresses whose
-
-current value equals [needleValue] (exact-match refine). Otherwise [needleValue] is
-
-ignored and each candidate's current value is compared against its OWN previous value
-
-(0 = increased, 1 = decreased, 2 = unchanged) - this is what lets these refines chain
-
-across multiple passes, not just once right after a blind search. [valueType] and
-
-[tolerance] work as in [cheatSearch].
+​/
+​Narrows [candidates] (interleaved like [cheatSearch]'s return) down to just the ones
+​that still qualify - the "next scan" step. If [comparison] is -1, keeps addresses whose
+​current value equals [needleValue] (exact-match refine). Otherwise [needleValue] is
+​ignored and each candidate's current value is compared against its OWN previous value
+​(0 = increased, 1 = decreased, 2 = unchanged) - this is what lets these refines chain
+​across multiple passes, not just once right after a blind search. [valueType] and
+​[tolerance] work as in [cheatSearch].
 */
 external fun cheatRefine(
 candidates: LongArray,
@@ -295,165 +223,110 @@ needleValue: Int,
 valueType: Int,
 tolerance: Float
 ): LongArray
-
-/
-
-Reads [length] bytes of live guest process memory at [address].
-
-Returns an empty array on failure.
+​/
+​Reads [length] bytes of live guest process memory at [address].
+​Returns an empty array on failure.
 */
 external fun cheatRead(address: Long, length: Int): ByteArray
-
-/
-
-Writes [value] into live guest process memory at [address]. [value] must be the same
-
-length as whatever it's replacing - this does not shift or resize anything.
+​/
+​Writes [value] into live guest process memory at [address]. [value] must be the same
+​length as whatever it's replacing - this does not shift or resize anything.
 */
 external fun cheatWrite(address: Long, value: ByteArray): Boolean
-
-/
-
-Freezes [address] to [value]: a native background thread keeps rewriting it (roughly
-
-every 100ms) until [cheatClearFrozen] is called, so the game can't change it without a
-
-matching cheat code. Calling this again for an already-frozen address just updates the
-
-value being held.
+​/
+​Freezes [address] to [value]: a native background thread keeps rewriting it (roughly
+​every 100ms) until [cheatClearFrozen] is called, so the game can't change it without a
+​matching cheat code. Calling this again for an already-frozen address just updates the
+​value being held.
 */
 external fun cheatSetFrozen(address: Long, value: Int)
-
-/ Unfreezes [address]. No-op if it wasn't frozen. */
+​/ Unfreezes [address]. No-op if it wasn't frozen. */
 external fun cheatClearFrozen(address: Long)
-
-/ The current frozen (address, value) set, interleaved like [cheatSearch]'s return. */
+​/ The current frozen (address, value) set, interleaved like [cheatSearch]'s return. */
 external fun cheatGetFrozen(): LongArray
-
-/
-
-Stops emulation.
+​/
+​Stops emulation.
 */
 external fun stopEmulation()
-
-/
-
-Returns true if emulation is running (or is paused).
+​/
+​Returns true if emulation is running (or is paused).
 */
 external fun isRunning(): Boolean
-
-/
-
-Returns true if emulation is paused.
+​/
+​Returns true if emulation is paused.
 */
 external fun isPaused(): Boolean
-
-/
-
-Returns the performance stats for the current game
+​/
+​Returns the performance stats for the current game
 */
 external fun getPerfStats(): DoubleArray
-
-/
-
-Frames handed to the display per second, generated ones included
+​/
+​Frames handed to the display per second, generated ones included
 */
 external fun getPresentedFps(): Double
-
-/
-
-Returns the number of shaders being built
+​/
+​Returns the number of shaders being built
 */
 external fun getShadersBuilding(): Int
-
-/
-
-Returns the current CPU backend.
+​/
+​Returns the current CPU backend.
 */
 external fun getCpuBackend(): String
-
-/
-
-Returns the current GPU Driver.
+​/
+​Returns the current GPU Driver.
 */
 external fun getGpuDriver(): String
-
-external fun applySettings()
-
-external fun logSettings()
-
-external fun refreshThreadPolicies()
-
-external fun GetDebugKnobAt(index: Int): Boolean
-
-/
-
-Set the current speed limit to the configured turbo speed.
+​external fun applySettings()
+​external fun logSettings()
+​external fun refreshThreadPolicies()
+​external fun GetDebugKnobAt(index: Int): Boolean
+​/
+​Set the current speed limit to the configured turbo speed.
 */
 external fun setTurboSpeedLimit(enabled: Boolean)
-
-/
-
-Set the current speed limit to the configured slow speed.
+​/
+​Set the current speed limit to the configured slow speed.
 */
 external fun setSlowSpeedLimit(enabled: Boolean)
-
-/
-
-Set the current speed limit to the configured standard speed.
+​/
+​Set the current speed limit to the configured standard speed.
 */
 external fun setStandardSpeedLimit(enabled: Boolean)
-
-external fun isTurboMode(): Boolean
+​external fun isTurboMode(): Boolean
 external fun isSlowMode(): Boolean
-
-/
-
-Returns Vulkan driver version / API version / GPU model
+​/
+​Returns Vulkan driver version / API version / GPU model
 */
 external fun getVulkanDriverVersion(): String
 external fun getVulkanApiVersion(): String
 external fun getGpuModel(): String
-
-/
-
-Returns a summary of detailed information about the CPU.
+​/
+​Returns a summary of detailed information about the CPU.
 */
 external fun getCpuSummary(): String
-
-/
-
-Checks for available updates.
+​/
+​Checks for available updates.
 */
 external fun checkForUpdate(): UpdateResult?
-
-/
-
-Returns whether the update checker is enabled through CMAKE options.
+​/
+​Returns whether the update checker is enabled through CMAKE options.
 */
 external fun isUpdateCheckerEnabled(): Boolean
-
-/
-
-Returns whether or not this is a nightly build.
+​/
+​Returns whether or not this is a nightly build.
 */
 external fun isNightlyBuild(): Boolean
-
-/
-
-Returns the build version generated by CMake (BUILD_VERSION).
+​/
+​Returns the build version generated by CMake (BUILD_VERSION).
 */
 external fun getBuildVersion(): String
-
-enum class CoreError {
+​enum class CoreError {
 ErrorSystemFiles,
 ErrorSavestate,
 ErrorUnknown
 }
-
-/
-
-playtime tracking
+​/
+​playtime tracking
 */
 external fun playTimeManagerInit()
 external fun playTimeManagerStart()
@@ -462,28 +335,20 @@ external fun playTimeManagerGetPlayTime(programId: String): Long
 external fun playTimeManagerGetCurrentTitleId(): Long
 external fun playTimeManagerResetProgramPlayTime(programId: String)
 external fun playTimeManagerSetPlayTime(programId: String, playTimeSeconds: Long)
-
-var coreErrorAlertResult = false
+​var coreErrorAlertResult = false
 val coreErrorAlertLock = Object()
-
-private fun onCoreErrorImpl(title: String, message: String) {
+​private fun onCoreErrorImpl(title: String, message: String) {
 val emulationActivity = sEmulationActivity.get()
 if (emulationActivity == null) {
 Log.error("[NativeLibrary] EmulationActivity not present")
 return
 }
-
- val fragment = CoreErrorDialogFragment.newInstance(title, message)
- fragment.show(emulationActivity.supportFragmentManager, "coreError")
-
-
+​val fragment = CoreErrorDialogFragment.newInstance(title, message)
+fragment.show(emulationActivity.supportFragmentManager, "coreError")
 }
-
-/
-
-Handles a core error.
-
-@return true: continue; false: abort
+​/
+​Handles a core error.
+​@return true: continue; false: abort
 */
 fun onCoreError(error: CoreError?, details: String): Boolean {
 val emulationActivity = sEmulationActivity.get()
@@ -491,8 +356,7 @@ if (emulationActivity == null) {
 Log.error("[NativeLibrary] EmulationActivity not present")
 return false
 }
-
-val title: String
+​val title: String
 val message: String
 when (error) {
 CoreError.ErrorSystemFiles -> {
@@ -502,34 +366,25 @@ R.string.system_archive_not_found_message,
 details.ifEmpty { emulationActivity.getString(R.string.system_archive_general) }
 )
 }
-
- CoreError.ErrorSavestate -> {
-     title = emulationActivity.getString(R.string.save_load_error)
-     message = details
- }
-
- CoreError.ErrorUnknown -> {
-     title = emulationActivity.getString(R.string.fatal_error)
-     message = emulationActivity.getString(R.string.fatal_error_message)
- }
-
- else -> {
-     return true
- }
-
-
+​CoreError.ErrorSavestate -> {
+title = emulationActivity.getString(R.string.save_load_error)
+message = details
 }
-
-// Show the AlertDialog on the main thread.
+​CoreError.ErrorUnknown -> {
+title = emulationActivity.getString(R.string.fatal_error)
+message = emulationActivity.getString(R.string.fatal_error_message)
+}
+​else -> {
+return true
+}
+}
+​// Show the AlertDialog on the main thread.
 emulationActivity.runOnUiThread { onCoreErrorImpl(title, message) }
-
-// Wait for the lock to notify that it is complete.
+​// Wait for the lock to notify that it is complete.
 synchronized(coreErrorAlertLock) { coreErrorAlertLock.wait() }
-
-return coreErrorAlertResult
+​return coreErrorAlertResult
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun addNetPlayMessage(type: Int, message: String) {
 val emulationActivity = sEmulationActivity.get()
@@ -539,455 +394,172 @@ emulationActivity.addNetPlayMessages(type, message)
 NetPlayManager.addNetPlayMessage(type, message)
 }
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun clearChat() {
 NetPlayManager.clearChat()
 }
-
-external fun initJvm()
+​external fun initJvm()
 external fun initMultiplayer()
-
-@Keep
+​@Keep
 @JvmStatic
 fun exitEmulationActivity(resultCode: Int) {
-val Success = 0
-val ErrorNotInitialized = 1
-val ErrorGetLoader = 2
-val ErrorSystemFiles = 3
-val ErrorSharedFont = 4
 val ErrorVideoCore = 5
-val ErrorUnknown = 6
-val ErrorLoader = 7
-
- val captionId: Int
- var descriptionId: Int
- when (resultCode) {
-     ErrorVideoCore -> {
-         captionId = R.string.loader_error_video_core
-         descriptionId = R.string.loader_error_video_core_description
-     }
-
-     else -> {
-         captionId = R.string.loader_error_encrypted
-         descriptionId = R.string.loader_error_encrypted_roms_description
-         if (!reloadKeys()) {
-             descriptionId = R.string.loader_error_encrypted_keys_description
-         }
-     }
- }
-
- val emulationActivity = sEmulationActivity.get()
- if (emulationActivity == null) {
-     Log.warning("[NativeLibrary] EmulationActivity is null, can't exit.")
-     return
- }
-
- val builder = MaterialAlertDialogBuilder(emulationActivity)
-     .setTitle(captionId)
-     .setMessage(
-         Html.fromHtml(
-             emulationActivity.getString(descriptionId),
-             Html.FROM_HTML_MODE_LEGACY
-         )
-     )
-     .setPositiveButton(android.R.string.ok) { _: DialogInterface?, _: Int ->
-         emulationActivity.finish()
-     }
-     .setOnDismissListener { emulationActivity.finish() }
- emulationActivity.runOnUiThread {
-     val alert = builder.create()
-     alert.show()
-     (alert.findViewById<View>(android.R.id.message) as TextView).movementMethod =
-         LinkMovementMethod.getInstance()
- }
-
-
+​val captionId: Int
+var descriptionId: Int
+when (resultCode) {
+ErrorVideoCore -> {
+captionId = R.string.loader_error_video_core
+descriptionId = R.string.loader_error_video_core_description
 }
-
-fun setEmulationActivity(emulationActivity: EmulationActivity?) {
+​else -> {
+captionId = R.string.loader_error_encrypted
+descriptionId = R.string.loader_error_encrypted_roms_description
+if (!reloadKeys()) {
+descriptionId = R.string.loader_error_encrypted_keys_description
+}
+}
+}
+​val emulationActivity = sEmulationActivity.get()
+if (emulationActivity == null) {
+Log.warning("[NativeLibrary] EmulationActivity is null, can't exit.")
+return
+}
+​val builder = MaterialAlertDialogBuilder(emulationActivity)
+.setTitle(captionId)
+.setMessage(
+Html.fromHtml(
+emulationActivity.getString(descriptionId),
+Html.FROM_HTML_MODE_LEGACY
+)
+)
+.setPositiveButton(android.R.string.ok) { _: DialogInterface?, _: Int ->
+emulationActivity.finish()
+}
+.setOnDismissListener { emulationActivity.finish() }
+emulationActivity.runOnUiThread {
+val alert = builder.create()
+alert.show()
+(alert.findViewById<View>(android.R.id.message) as TextView).movementMethod =
+LinkMovementMethod.getInstance()
+}
+}
+​fun setEmulationActivity(emulationActivity: EmulationActivity?) {
 Log.debug("[NativeLibrary] Registering EmulationActivity.")
 sEmulationActivity = WeakReference(emulationActivity)
 }
-
-fun clearEmulationActivity() {
+​fun clearEmulationActivity() {
 Log.debug("[NativeLibrary] Unregistering EmulationActivity.")
 sEmulationActivity.clear()
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun onEmulationStarted() {
 sEmulationActivity.get()?.onEmulationStarted()
 }
-
-// The emulation thread can end after the activity is gone (closed from Recents, or destroyed
-// by the system): there is nothing left to tell then, and throwing here killed the app.
-@Keep
+​@Keep
 @JvmStatic
 fun onEmulationStopped(status: Int) {
 sEmulationActivity.get()?.onEmulationStopped(status)
 ?: EmulationActivity.onEmulationStoppedWithoutActivity()
 }
-
-@Keep
+​@Keep
 @JvmStatic
 fun onProgramChanged(programIndex: Int) {
 sEmulationActivity.get()?.onProgramChanged(programIndex)
 }
-
-/
-
-Logs the Lemon version, Android version and, CPU.
+​/
+​Logs the Lemon version, Android version and, CPU.
 */
 external fun logDeviceInfo()
-
-/
-
-Submits inline keyboard text. Called on input for buttons that result text.
-
-@param text Text to submit to the inline software keyboard implementation.
+​/
+​Submits inline keyboard text. Called on input for buttons that result text.
+​@param text Text to submit to the inline software keyboard implementation.
 */
 external fun submitInlineKeyboardText(text: String?)
-
-/
-
-Submits inline keyboard input. Used to indicate keys pressed that are not text.
-
-@param key_code Android Key Code associated with the keyboard input.
+​/
+​Submits inline keyboard input. Used to indicate keys pressed that are not text.
+​@param key_code Android Key Code associated with the keyboard input.
 */
 external fun submitInlineKeyboardInput(key_code: Int)
-
-/
-
-Creates a generic user directory if it doesn't exist already
+​/
+​Creates a generic user directory if it doesn't exist already
 */
 external fun initializeEmptyUserDirectory()
-
-/
-
-Gets the launch path for a given applet. It is the caller's responsibility to also
-
-set the system's current applet ID before trying to launch the nca given by this function.
-
-@param id The applet entry ID
-
-@return The applet's launch path
+​/
+​Gets the launch path for a given applet.
 */
 external fun getAppletLaunchPath(id: Long): String
-
-/
-
-Sets the system's current applet ID before launching.
-
-@param appletId One of the ids in the Service::AM::Applets::AppletId enum
+​/
+​Sets the system's current applet ID before launching.
 */
 external fun setCurrentAppletId(appletId: Int)
-
-/
-
-Launch external URL when Web applet and opens browser
-
-@param String URL
+​/
+​Launch external URL when Web applet and opens browser
 */
 @Keep
 @JvmStatic
 fun openExternalUrl(url: String) {
 WebBrowser.openExternal(url)
 }
-
-/
-
-Sets the cabinet mode for launching the cabinet applet.
-
-@param cabinetMode One of the modes that corresponds to the enum in Service::NFP::CabinetMode
+​/
+​Sets the cabinet mode for launching the cabinet applet.
 */
 external fun setCabinetMode(cabinetMode: Int)
-
-/
-
-Checks whether NAND contents are available and valid.
-
-@return 'true' if firmware is available
+​/
+​Checks whether NAND contents are available and valid.
 */
 external fun isFirmwareAvailable(): Boolean
-
-/
-
-Gets the firmware version.
-
-@return Reported firmware version
+​/
+​Gets the firmware version.
 */
 external fun firmwareVersion(): String
-
-/
-
-Check if a game requires firmware to be playable.
-
-@param programId The game's Program ID.
-
-@return Whether or not the game requires firmware to be playable.
+​/
+​Check if a game requires firmware to be playable.
 */
 external fun gameRequiresFirmware(programId: String): Boolean
-
-/
-
-Installs keys from the specified path.
-
-@param path The path to install keys from.
-
-@param ext What extension the keys should have.
-
-@return The result code.
+​/
+​Installs keys from the specified path.
 */
 external fun installKeys(path: String, ext: String): Int
-
-/
-
-@return Whether this GPU can run the Lossless Scaling frame generation shaders,
-
-    which are built against the Vulkan memory model.
-
-
-*/
-external fun supportsFrameGeneration(): Boolean
-
-/
-
-@return Path the user-supplied Lossless Scaling library is expected at.
-*/
-external fun getLosslessDllPath(): String
-
-/
-
-Parses the installed Lossless Scaling library and checks that every shader the
-
-frame generation chain needs is present.
-
-@return The result code, matching the losslessDllResults array.
-*/
-external fun validateLosslessDll(): Int
-
-/
-
-Translates the frame generation shaders out of the installed Lossless Scaling library
-
-and writes them to the SPIR-V cache. Slow, so call it off the main thread.
-
-@return The result code, matching the losslessDllResults array.
-*/
-external fun prepareLosslessDll(): Int
-
-/
-
-Deletes the installed Lossless Scaling library.
-
-@return Whether the library is gone after the call.
-*/
-external fun removeLosslessDll(): Boolean
-
-/
-
-Checks the PatchManager for any addons that are available
-
-@param path Path to game file. Can be a [Uri].
-
-@param programId String representation of a game's program ID
-
-@return Array of available patches
-*/
-external fun getPatchesForFile(path: String, programId: String): Array?
-
-/
-
-The build ID a game's cheats are keyed by (its main executable's, with the installed update),
-
-as the 16 hex digits cheat files are named after; empty if it can't be read. The running
-
-game's when [programId] is running.
-*/
-external fun getCheatBuildId(path: String, programId: String): String
-
-/
-
-The Atmosphere cheats loaded for [buildId], one string per cheat: mod folder ("" for a loose
-
-cheat_*.txt file), name, enabled (1/0) and master code (1/0), separated by \u001F.
-*/
-external fun getCheats(programId: String, buildId: String): Array
-
-/
-
-Switches one cheat of a mod folder on or off; applied at once when the game is running.
-
-Returns 0 when saved, 1 when it could not be saved, 2 when switching it on would overflow the
-
-cheat engine (it is left off).
-*/
-external fun setCheatEnabled(
+​external fun supportsFrameGeneration(): Boolean
+​external fun getLosslessDllPath(): String
+​external fun validateLosslessDll(): Int
+​external fun prepareLosslessDll(): Int
+​external fun removeLosslessDll(): Boolean
+​external fun getPatchesForFile(path: String, programId: String): Array<Patch>?
+​external fun getCheatBuildId(path: String, programId: String): String
+​external fun getCheats(programId: String, buildId: String): Array<String>
+​external fun setCheatEnabled(
 programId: String,
 buildId: String,
 folder: String,
 name: String,
 enabled: Boolean
 ): Int
-
-/ Reads the cheats again if [programId] is running (after a cheat folder was removed). */
-external fun reloadCheats(programId: String)
-
-/
-
-Saves pasted cheat codes for [buildId] in a new "Lemon cheats" mod folder. Returns how many
-
-cheats the text holds; 0 if none and -1 if they could not be saved, and then nothing is.
-*/
-external fun addCheats(programId: String, buildId: String, text: String): Int
-
-/
-
-Removes an update for a given [programId]
-
-@param programId String representation of a game's program ID
-*/
-external fun removeUpdate(programId: String)
-
-/
-
-Removes all DLC for a  [programId]
-
-@param programId String representation of a game's program ID
-*/
-external fun removeDLC(programId: String)
-
-/
-
-Removes a mod installed for a given [programId]
-
-@param programId String representation of a game's program ID
-
-@param name The name of a mod as given by [getPatchesForFile]. This corresponds with the name
-
-of the mod's directory in a game's load folder.
-*/
-external fun removeMod(programId: String, name: String)
-
-/
-
-Verifies all installed content
-
-@param callback UI callback for verification progress. Return true in the callback to cancel.
-
-@return Array of content that failed verification. Successful if empty.
-*/
-external fun verifyInstalledContents(
+​external fun reloadCheats(programId: String)
+​external fun addCheats(programId: String, buildId: String, text: String): Int
+​external fun removeUpdate(programId: String)
+​external fun removeDLC(programId: String)
+​external fun removeMod(programId: String, name: String)
+​external fun verifyInstalledContents(
 callback: (max: Long, progress: Long) -> Boolean
-): Array
-
-/
-
-Verifies the contents of a game
-
-@param path String path to a game
-
-@param callback UI callback for verification progress. Return true in the callback to cancel.
-
-@return Int that is meant to be converted to a [GameVerificationResult]
-*/
-external fun verifyGameContents(
+): Array<String>
+​external fun verifyGameContents(
 path: String,
 callback: (max: Long, progress: Long) -> Boolean
 ): Int
-
-/
-
-Gets the save location for a specific game
-
-@param programId String representation of a game's program ID
-
-@return Save data path that may not exist yet
-*/
-external fun getSavePath(programId: String): String
-
-/
-
-Gets the root save directory for the default profile as either
-
-/user/save/account/ or /user/save/000...000/
-
-@param future If true, returns the /user/save/account/... directory
-
-@return Save data path that may not exist yet
-*/
-external fun getDefaultProfileSaveDataRoot(future: Boolean): String
-
-/
-
-Adds a file to the manual filesystem provider in our EmulationSession instance
-
-@param path Path to the file we're adding. Can be a string representation of a [Uri] or
-
-a normal path
-*/
-external fun addFileToFilesystemProvider(path: String)
-
-/
-
-Adds a game-folder file to the manual filesystem provider, respecting the internal gate for
-
-game-folder external-content mounting.
-*/
-external fun addGameFolderFileToFilesystemProvider(path: String)
-
-/
-
-Clears all files added to the manual filesystem provider in our EmulationSession instance
-*/
-external fun clearFilesystemProvider()
-
-/
-
-Gets the current virtual amiibo state reported by the core.
-
-@return Native enum value for the current amiibo state.
-*/
-external fun getVirtualAmiiboState(): Int
-
-/
-
-Loads amiibo data into the currently running emulation session.
-
-@param data Raw amiibo file contents.
-
-@return Native enum value representing the load result.
-*/
-external fun loadAmiibo(data: ByteArray): Int
-
-/
-
-Checks if all necessary keys are present for decryption
-*/
-external fun areKeysPresent(): Boolean
-
-/
-
-"namebytes donebytes total" for the solid .nsz/.xcz content being decompressed right
-
-now, or null when nothing is.
-*/
-external fun getNczDecodeInfo(): String?
-
-/
-
-Updates the device power state to global variables
-*/
-external fun updatePowerState(percentage: Int, isCharging: Boolean, hasBattery: Boolean)
-
-/
-
-Profile manager native calls
-*/
-external fun getAllUsers(): Array?
+​external fun getSavePath(programId: String): String
+​external fun getDefaultProfileSaveDataRoot(future: Boolean): String
+​external fun addFileToFilesystemProvider(path: String)
+​external fun addGameFolderFileToFilesystemProvider(path: String)
+​external fun clearFilesystemProvider()
+​external fun getVirtualAmiiboState(): Int
+​external fun loadAmiibo(data: ByteArray): Int
+​external fun areKeysPresent(): Boolean
+​external fun getNczDecodeInfo(): String?
+​external fun updatePowerState(percentage: Int, isCharging: Boolean, hasBattery: Boolean)
+​external fun getAllUsers(): Array<String>?
 external fun getUserUsername(uuid: String): String?
 external fun getUserCount(): Long
 external fun canCreateUser(): Boolean
