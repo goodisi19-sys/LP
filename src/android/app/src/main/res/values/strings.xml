@@ -2194,6 +2194,8 @@ along with this program. If not, see https://www.gnu.org/licenses/gpl-3.0.html
         <item quantity="one">%d cheat added</item>
         <item quantity="other">%d cheats added</item>
     </plurals>
-</resources>
     <string name="cheat_build_id">Build ID: %1$s</string>
     <string name="cheat_build_id_unknown">Build ID: Не определен</string>
+
+</resources>
+    
