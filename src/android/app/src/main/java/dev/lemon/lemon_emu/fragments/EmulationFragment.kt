@@ -97,6 +97,7 @@ import dev.lemon.lemon_emu.features.settings.model.Settings.EmulationOrientation
 import dev.lemon.lemon_emu.features.settings.model.Settings.EmulationVerticalAlignment
 import dev.lemon.lemon_emu.features.settings.model.ShortSetting
 import dev.lemon.lemon_emu.features.settings.utils.SettingsFile
+import dev.lemon.lemon_emu.fragments.CheatsDialogFragment
 import dev.lemon.lemon_emu.model.DriverViewModel
 import dev.lemon.lemon_emu.model.EmulationViewModel
 import dev.lemon.lemon_emu.model.Game
@@ -676,7 +677,6 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         completeViewSetup()
     }
 
-
     private fun setupOverlayGamelessEditMode() {
         binding.surfaceInputOverlay.post {
             binding.surfaceInputOverlay.refreshControls(gameless = true)
@@ -883,9 +883,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 }
 
                 R.id.menu_cheats -> {
-                    game?.let {
-                        CheatsDialogFragment.newInstance(it)
-                            .show(childFragmentManager, CheatsDialogFragment.TAG)
+                    binding.drawerLayout.close()
+                    game?.let { currentGame ->
+                        CheatsDialogFragment.newInstance(currentGame)
+                            .show(parentFragmentManager, CheatsDialogFragment.TAG)
                     }
                     true
                 }
@@ -920,11 +921,11 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                     true
                 }
 
-            if (BooleanSetting.ENABLE_QUICK_SETTINGS.getBoolean())
-                R.id.menu_quick_settings else 0 -> {
-                openQuickSettingsMenu()
-                true
-            }
+                if (BooleanSetting.ENABLE_QUICK_SETTINGS.getBoolean())
+                    R.id.menu_quick_settings else 0 -> {
+                    openQuickSettingsMenu()
+                    true
+                }
 
                 R.id.menu_settings_per_game -> {
                     val action = HomeNavigationDirections.actionGlobalSettingsActivity(
@@ -1234,11 +1235,6 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private var menuAnchor: View? = null
 
     /**
-     * Replaces the look of the in-game side panel with the redesigned one. The classic menu stays
-     * in place, hidden, and the panel drives it: it lists its items and sends every tap through
-     * its own handler, so behavior is identical.
-     */
-    /**
      * Hands the view focus to the redesigned panel. The window is often in touch mode here (the
      * drawer was opened with a swipe) and the game's touch overlay holds the focus; a view that is
      * not focusable in touch mode can't take it from there, and then no key would reach the rows.
@@ -1515,7 +1511,6 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 R.array.rendererAccuracyNames,
                 R.array.rendererAccuracyValues
             )
-
 
             quickSettings.addIntSetting(
                 R.string.renderer_scaling_filter,
@@ -2893,7 +2888,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.quickSettingsSheet) { v, insets ->
             val systemBarsInsets: Insets = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-           if (v.layoutDirection == View.LAYOUT_DIRECTION_LTR) {
+            if (v.layoutDirection == View.LAYOUT_DIRECTION_LTR) {
                 v.setPadding(
                     systemBarsInsets.left,
                     systemBarsInsets.top,
