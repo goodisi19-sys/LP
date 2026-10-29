@@ -287,7 +287,6 @@ class GamePropertiesFragment : Fragment() {
 
                 var hasError = false
 
-                // normally cant be above 9999
                 if (hoursValue < 0 || hoursValue > 9999) {
                     hoursLayout.error = getString(R.string.hours_must_be_between_0_and_9999)
                     hasError = true
@@ -354,7 +353,7 @@ class GamePropertiesFragment : Fragment() {
                     secondaryActions = buildList {
                         val configExists = File(
                             DirectoryInitialization.userDirectory +
-                                    "/config/custom/" + args.game.settingsName + ".ini"
+                                "/config/custom/" + args.game.settingsName + ".ini"
                         ).exists()
 
                         add(SubMenuPropertySecondaryAction(
@@ -382,7 +381,7 @@ class GamePropertiesFragment : Fragment() {
                             action = {
                                 val configFile = File(
                                     DirectoryInitialization.userDirectory +
-                                            "/config/custom/" + args.game.settingsName + ".ini"
+                                        "/config/custom/" + args.game.settingsName + ".ini"
                                 )
                                 if (configFile.exists()) {
                                     shareConfigFile(configFile)
@@ -416,7 +415,7 @@ class GamePropertiesFragment : Fragment() {
                         R.drawable.ic_key,
                         action = {
                             CheatsDialogFragment.newInstance(args.game)
-                                .show(childFragmentManager, CheatsDialogFragment.TAG)
+                                .show(parentFragmentManager, CheatsDialogFragment.TAG)
                         }
                     )
                 )
@@ -724,7 +723,6 @@ class GamePropertiesFragment : Fragment() {
                 } catch (e: Exception) {
                     Log.error("[SaveImport] Import failed: ${e.message}")
                     cacheSaveDir.deleteRecursively()
-                    // This runs on a worker thread: a Toast from here threw and crashed the app.
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
                             LemonApplication.appContext,
@@ -736,10 +734,6 @@ class GamePropertiesFragment : Fragment() {
             }.show(parentFragmentManager, ProgressDialogFragment.TAG)
         }
 
-    /**
-     * Exports the save file located in the given folder path by creating a zip file and opening a
-     * file picker to save.
-     */
     private val exportSaves = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
     ) { result ->
@@ -766,9 +760,6 @@ class GamePropertiesFragment : Fragment() {
         }.show(parentFragmentManager, ProgressDialogFragment.TAG)
     }
 
-    /**
-     * Imports an ini file from external storage to internal app directory and override per-game config
-     */
     private val importConfig = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { result ->
@@ -798,9 +789,6 @@ class GamePropertiesFragment : Fragment() {
         }
     }
 
-    /**
-     * Exports game's config ini to the specified location in external storage
-     */
     private val exportConfig = registerForActivityResult(
         ActivityResultContracts.CreateDocument("text/ini")
     ) { result ->
