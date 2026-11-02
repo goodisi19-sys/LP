@@ -103,6 +103,7 @@ enum class ThreadPlacement : u32 {
     Default = 0,
     Background = 1,
     Efficiency = 2,
+    Performance = 3,
 };
 
 void SetCurrentThreadPriority(ThreadPriority new_priority);
