@@ -94,7 +94,7 @@ int NiceValueForPriority(Common::ThreadPriority priority) {
 #include <vector>
 
 namespace {
-constexpr size_t ANDROID_MINIMUM_PERFORMANCE_CORES = 6;
+[[maybe_unused]] constexpr size_t ANDROID_MINIMUM_PERFORMANCE_CORES = 6;
 constexpr s64 ANDROID_POLICY_POLL_INTERVAL_NS = 5000000000LL;
 
 enum class CoreGroup {
