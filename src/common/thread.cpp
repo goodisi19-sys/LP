@@ -232,4 +232,354 @@ std::vector<CoreInfo> CollectCores(const cpu_set_t& allowed, s32 total, const ch
                        [first_weight](const CoreInfo& core) { return core.weight == first_weight; });
 }
 
-[[maybe_unused]] bool MidrsAreDistinct(const std::vector<CoreInfo>& cores
+[[maybe_unused]] bool MidrsAreDistinct(const std::vector<CoreInfo>& cores) {
+    if (cores.empty()) {
+        return false;
+    }
+    const u64 first_midr = cores.front().midr;
+    if (first_midr == 0) {
+        return false;
+    }
+    return std::any_of(cores.begin(), cores.end(),
+                       [first_midr](const CoreInfo& core) { return core.midr != 0 && core.midr != first_midr; });
+}
+
+void ComputeTopologyLocked(CpuTopologyState& state) {
+    state.initialized = true;
+    state.separated = false;
+    state.has_prime = false;
+    CPU_ZERO(&state.allowed);
+    CPU_ZERO(&state.prime);
+    CPU_ZERO(&state.performance);
+    CPU_ZERO(&state.efficiency);
+
+    if (sched_getaffinity(getpid(), sizeof(state.allowed), &state.allowed) != 0) {
+        LOG_WARNING(Common, "Could not query process CPU affinity: {}",
+                    ::Common::GetLastErrorMsg());
+        return;
+    }
+
+    const s32 total = PossibleCpuCount();
+    auto cores = CollectCores(state.allowed, total, "cpufreq/cpuinfo_max_freq", false);
+    if (cores.empty()) {
+        cores = CollectCores(state.allowed, total, "cpu_capacity", true);
+    }
+    if (cores.empty()) {
+        LOG_WARNING(Common, "Could not determine CPU topology, thread placement is disabled");
+        return;
+    }
+
+    std::sort(cores.begin(), cores.end(), [](const CoreInfo& lhs, const CoreInfo& rhs) {
+        if (lhs.weight != rhs.weight) {
+            return lhs.weight > rhs.weight;
+        }
+        return lhs.cpu > rhs.cpu;
+    });
+
+    const s64 max_weight = cores.front().weight;
+
+    for (const auto& core : cores) {
+        if (core.weight >= max_weight * 95 / 100) {
+            CPU_SET(core.cpu, &state.prime);
+        }
+    }
+    state.has_prime = CPU_COUNT(&state.prime) > 0;
+
+    for (const auto& core : cores) {
+        if (!CPU_ISSET(core.cpu, &state.prime) && core.weight >= max_weight * 65 / 100) {
+            CPU_SET(core.cpu, &state.performance);
+        }
+    }
+
+    if (CPU_COUNT(&state.performance) == 0) {
+        state.performance = state.allowed;
+    }
+
+    for (s32 cpu = 0; cpu < total; ++cpu) {
+        if (CPU_ISSET(cpu, &state.allowed) &&
+            !CPU_ISSET(cpu, &state.prime) &&
+            !CPU_ISSET(cpu, &state.performance)) {
+            CPU_SET(cpu, &state.efficiency);
+        }
+    }
+
+    if (CPU_COUNT(&state.efficiency) == 0) {
+        for (s32 cpu = 0; cpu < 4 && cpu < total; ++cpu) {
+            if (CPU_ISSET(cpu, &state.allowed) && !CPU_ISSET(cpu, &state.prime)) {
+                CPU_SET(cpu, &state.efficiency);
+            }
+        }
+    }
+
+    if (state.has_prime && CPU_COUNT(&state.prime) <= 2) {
+        s32 added = 0;
+        for (const auto& core : cores) {
+            if (!CPU_ISSET(core.cpu, &state.prime) && CPU_ISSET(core.cpu, &state.performance)) {
+                CPU_SET(core.cpu, &state.prime);
+                ++added;
+                if (added >= 2) {
+                    break;
+                }
+            }
+        }
+    }
+
+    state.separated = CPU_COUNT(&state.efficiency) > 0 || state.has_prime;
+    LOG_INFO(Common, "Snapdragon 8 Elite Topology: {} prime cores, {} perf cores, {} eff cores",
+             CPU_COUNT(&state.prime), CPU_COUNT(&state.performance), CPU_COUNT(&state.efficiency));
+}
+
+void EnsureTopologyLocked(CpuTopologyState& state) {
+    if (!state.initialized) {
+        ComputeTopologyLocked(state);
+    }
+}
+
+void RefreshTopologyLocked(CpuTopologyState& state) {
+    if (!state.initialized) {
+        ComputeTopologyLocked(state);
+        return;
+    }
+    cpu_set_t current;
+    CPU_ZERO(&current);
+    if (sched_getaffinity(getpid(), sizeof(current), &current) != 0) {
+        return;
+    }
+    if (std::memcmp(&current, &state.allowed, sizeof(current)) != 0) {
+        ComputeTopologyLocked(state);
+    }
+}
+
+bool ApplyCoreGroupLocked(CpuTopologyState& state, pid_t tid, CoreGroup group,
+                          bool* gone = nullptr) {
+    const cpu_set_t* mask = &state.allowed;
+    if (group == CoreGroup::Prime && state.has_prime) {
+        mask = &state.prime;
+    } else if (group == CoreGroup::Performance && CPU_COUNT(&state.performance) > 0) {
+        mask = &state.performance;
+    } else if (group == CoreGroup::Efficiency && CPU_COUNT(&state.efficiency) > 0) {
+        mask = &state.efficiency;
+    }
+
+    if (CPU_COUNT(mask) == 0) {
+        return false;
+    }
+    if (sched_setaffinity(tid, sizeof(*mask), mask) != 0) {
+        if (gone != nullptr && errno == ESRCH) {
+            *gone = true;
+            return false;
+        }
+        return false;
+    }
+    return true;
+}
+
+bool KernelPreservesRequestedAffinity() {
+    utsname info{};
+    if (uname(&info) != 0) {
+        return false;
+    }
+    s32 major = 0;
+    s32 minor = 0;
+    if (std::sscanf(info.release, "%d.%d", &major, &minor) != 2) {
+        return false;
+    }
+    return major > 6 || (major == 6 && minor >= 2);
+}
+
+void SnapshotCanaryLocked(CpuTopologyState& state) {
+    state.canary_valid = false;
+    if (!state.separated) {
+        return;
+    }
+    for (const auto& policy : state.policies) {
+        if (policy.group == CoreGroup::Unrestricted) {
+            continue;
+        }
+        cpu_set_t mask;
+        CPU_ZERO(&mask);
+        if (sched_getaffinity(policy.tid, sizeof(mask), &mask) != 0) {
+            continue;
+        }
+        state.canary_tid = policy.tid;
+        state.canary_mask = mask;
+        state.canary_valid = true;
+        return;
+    }
+}
+
+bool DueForPoll(CpuTopologyState& state) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    const s64 now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+    s64 next = state.next_poll_ns.load(std::memory_order_relaxed);
+    if (now_ns < next) {
+        return false;
+    }
+    return state.next_poll_ns.compare_exchange_strong(
+        next, now_ns + ANDROID_POLICY_POLL_INTERVAL.count(), std::memory_order_relaxed);
+}
+
+ThreadPolicy& AcquirePolicyLocked(CpuTopologyState& state, pid_t tid) {
+    for (auto& policy : state.policies) {
+        if (policy.tid == tid) {
+            return policy;
+        }
+    }
+    return state.policies.emplace_back(ThreadPolicy{tid, CoreGroup::Unrestricted, 0, false});
+}
+
+void SetCurrentThreadCoreGroup(CoreGroup group) {
+    const pid_t tid = gettid();
+    (void)&t_policy_registration;
+
+    CoreGroup effective = group;
+    if (tid == getpid() && group != CoreGroup::Unrestricted) {
+        effective = CoreGroup::Unrestricted;
+    }
+
+    CpuTopologyState& state = State();
+    std::scoped_lock topology_lock{state.topology_mutex};
+    EnsureTopologyLocked(state);
+    ApplyCoreGroupLocked(state, tid, effective);
+
+    std::scoped_lock policy_lock{state.policy_mutex};
+    AcquirePolicyLocked(state, tid).group = effective;
+    if (!state.canary_valid) {
+        SnapshotCanaryLocked(state);
+    }
+}
+
+void RememberCurrentThreadNice(pid_t tid, s32 nice_value) {
+    (void)&t_policy_registration;
+    CpuTopologyState& state = State();
+    std::scoped_lock lock{state.policy_mutex};
+    ThreadPolicy& policy = AcquirePolicyLocked(state, tid);
+    policy.nice_value = nice_value;
+    policy.has_nice = true;
+}
+} // Anonymous namespace
+#endif
+
+#include "common/cpu_features.h"
+#ifdef ARCHITECTURE_x86_64
+#ifdef _MSC_VER
+#include <intrin.h>
+#else
+#include <x86intrin.h>
+#endif
+#include "common/x64/rdtsc.h"
+#endif
+
+namespace Common {
+
+void SetCurrentThreadPriority(ThreadPriority new_priority) {
+#ifdef _WIN32
+    int windows_priority = [&]() {
+        switch (new_priority) {
+        case ThreadPriority::Low: return THREAD_PRIORITY_BELOW_NORMAL;
+        case ThreadPriority::Normal: return THREAD_PRIORITY_NORMAL;
+        case ThreadPriority::High: return THREAD_PRIORITY_ABOVE_NORMAL;
+        case ThreadPriority::VeryHigh: return THREAD_PRIORITY_HIGHEST;
+        case ThreadPriority::Critical: return THREAD_PRIORITY_TIME_CRITICAL;
+        default: return THREAD_PRIORITY_NORMAL;
+        }
+    }();
+    SetThreadPriority(GetCurrentThread(), windows_priority);
+#elif defined(__HAIKU__)
+    int priority = [&]() {
+        switch (new_priority) {
+        case ThreadPriority::Low: return B_LOW_PRIORITY;
+        case ThreadPriority::Normal: return B_NORMAL_PRIORITY;
+        case ThreadPriority::High: return B_DISPLAY_PRIORITY;
+        case ThreadPriority::VeryHigh: return B_URGENT_DISPLAY_PRIORITY;
+        case ThreadPriority::Critical: return B_URGENT_PRIORITY;
+        default: return B_NORMAL_PRIORITY;
+        }
+    }();
+    set_thread_priority(find_thread(NULL), priority);
+#elif defined(__ANDROID__)
+    const int nice_value = NiceValueForPriority(new_priority);
+    const pid_t tid = gettid();
+    if (setpriority(PRIO_PROCESS, static_cast<id_t>(tid), nice_value) == 0) {
+        RememberCurrentThreadNice(tid, nice_value);
+    }
+
+    if (new_priority == ThreadPriority::VeryHigh || new_priority == ThreadPriority::Critical) {
+        SetCurrentThreadCoreGroup(CoreGroup::Prime);
+    } else if (new_priority == ThreadPriority::High || new_priority == ThreadPriority::Normal) {
+        SetCurrentThreadCoreGroup(CoreGroup::Performance);
+    } else {
+        SetCurrentThreadCoreGroup(CoreGroup::Efficiency);
+    }
+#elif defined(__linux__)
+    const int nice_value = NiceValueForPriority(new_priority);
+    if (setpriority(PRIO_PROCESS, 0, nice_value) != 0) {
+        LOG_DEBUG(Common, "Could not set thread nice value to {}: {}", nice_value,
+                  GetLastErrorMsg());
+    }
+#else
+    const s32 max_prio = sched_get_priority_max(SCHED_OTHER);
+    const s32 min_prio = sched_get_priority_min(SCHED_OTHER);
+    if (max_prio > min_prio) {
+        const u32 level = (std::min)(static_cast<u32>(new_priority), 4U);
+        sched_param params{};
+        params.sched_priority =
+            min_prio + static_cast<s32>(static_cast<u32>(max_prio - min_prio) * level) / 4;
+        pthread_setschedparam(pthread_self(), SCHED_OTHER, &params);
+    }
+#endif
+}
+
+void SetCurrentThreadName(const char* name) {
+#ifdef _MSC_VER
+    if (auto pf = (decltype(&SetThreadDescription))(void*)GetProcAddress(GetModuleHandle(TEXT("KernelBase.dll")), "SetThreadDescription"); pf)
+        pf(GetCurrentThread(), UTF8ToUTF16W(name).data());
+#elif  defined(__APPLE__)
+    pthread_setname_np(name);
+#elif defined(__HAIKU__)
+    rename_thread(find_thread(NULL), name);
+#elif defined(__Bitrig__) || defined(__DragonFly__) || defined(__FreeBSD__) || defined(__OpenBSD__)
+    pthread_set_name_np(pthread_self(), name);
+#elif defined(__NetBSD__)
+    pthread_setname_np(pthread_self(), "%s", (void*)name);
+#elif defined(__linux__) || defined(__CYGWIN__) || defined(__sun__) || defined(__glibc__) || defined(__managarm__)
+    int ret = pthread_setname_np(pthread_self(), name);
+    if (ret == ERANGE) {
+        char buf[16];
+        size_t const len = std::min<size_t>(std::strlen(name), sizeof(buf) - 1);
+        std::memcpy(buf, name, len);
+        buf[len] = '\0';
+        pthread_setname_np(pthread_self(), buf);
+    }
+#else
+    pthread_setname_np(pthread_self(), name);
+#endif
+}
+
+void SetCurrentThreadToPerformanceCores() {
+#if defined(__ANDROID__)
+    SetCurrentThreadCoreGroup(CoreGroup::Performance);
+#endif
+}
+
+void SetCurrentThreadToEfficiencyCores() {
+#if defined(__ANDROID__)
+    SetCurrentThreadCoreGroup(CoreGroup::Efficiency);
+#endif
+}
+
+void SetCurrentThreadToBackgroundWork() {
+#if defined(__ANDROID__)
+    SetCurrentThreadCoreGroup(CoreGroup::Efficiency);
+#endif
+}
+
+void SetCurrentThreadToAllCores() {
+#if defined(__ANDROID__)
+    ::Common::ADPF::RemoveCurrentThread();
+    SetCurrentThreadCoreGroup(CoreGroup::Unrestricted);
+#endif
+}
+
+void RefreshThreadPolicies() {
+#if defined(__ANDROID__)
