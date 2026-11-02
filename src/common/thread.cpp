@@ -95,7 +95,8 @@ int NiceValueForPriority(Common::ThreadPriority priority) {
 
 namespace {
 constexpr size_t ANDROID_MINIMUM_PERFORMANCE_CORES = 6;
-constexpr std::chrono::nanoseconds ANDROID_POLICY_POLL_INTERVAL = std::chrono::seconds(5);
+// Интервал опроса в наносекундах (5 секунд = 5,000,000,000 нс)
+constexpr s64 ANDROID_POLICY_POLL_INTERVAL_NS = 5000000000LL;
 
 enum class CoreGroup {
     Unrestricted,
@@ -399,7 +400,7 @@ bool DueForPoll(CpuTopologyState& state) {
         return false;
     }
     return state.next_poll_ns.compare_exchange_strong(
-        next, now_ns + ANDROID_POLICY_POLL_INTERVAL.count(), std::memory_order_relaxed);
+        next, now_ns + ANDROID_POLICY_POLL_INTERVAL_NS, std::memory_order_relaxed);
 }
 
 ThreadPolicy& AcquirePolicyLocked(CpuTopologyState& state, pid_t tid) {
@@ -574,7 +575,7 @@ void RefreshThreadPolicies() {
     std::erase_if(state.policies, [&state](const ThreadPolicy& policy) {
         bool gone = false;
         if (policy.has_nice &&
-            setpriority(PRIO_PROCESS, static_cast<id_t>(policy.tid), policy.nice_value) != 0 &&
+            setpriority(PRIO_PROCESS, static_산icast<id_t>(policy.tid), policy.nice_value) != 0 &&
             errno == ESRCH) {
             gone = true;
         }
