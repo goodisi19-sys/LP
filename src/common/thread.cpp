@@ -489,4 +489,216 @@ void SetCurrentThreadPriority(ThreadPriority new_priority) {
 
     if (new_priority == ThreadPriority::VeryHigh || new_priority == ThreadPriority::Critical) {
         SetCurrentThreadCoreGroup(CoreGroup::Prime);
-    } else if
+    } else if (new_priority == ThreadPriority::High || new_priority == ThreadPriority::Normal) {
+        SetCurrentThreadCoreGroup(CoreGroup::Performance);
+    } else {
+        SetCurrentThreadCoreGroup(CoreGroup::Efficiency);
+    }
+#elif defined(__linux__)
+    const int nice_value = NiceValueForPriority(new_priority);
+    if (setpriority(PRIO_PROCESS, 0, nice_value) != 0) {
+        LOG_DEBUG(Common, "Could not set thread nice value to {}: {}", nice_value,
+                  GetLastErrorMsg());
+    }
+#else
+    const s32 max_prio = sched_get_priority_max(SCHED_OTHER);
+    const s32 min_prio = sched_get_priority_min(SCHED_OTHER);
+    if (max_prio > min_prio) {
+        const u32 level = (std::min)(static_cast<u32>(new_priority), 4U);
+        sched_param params{};
+        params.sched_priority =
+            min_prio + static_cast<s32>(static_cast<u32>(max_prio - min_prio) * level) / 4;
+        pthread_setschedparam(pthread_self(), SCHED_OTHER, &params);
+    }
+#endif
+}
+
+void SetCurrentThreadName(const char* name) {
+#ifdef _MSC_VER
+    if (auto pf = (decltype(&SetThreadDescription))(void*)GetProcAddress(GetModuleHandle(TEXT("KernelBase.dll")), "SetThreadDescription"); pf)
+        pf(GetCurrentThread(), UTF8ToUTF16W(name).data());
+#elif  defined(__APPLE__)
+    pthread_setname_np(name);
+#elif defined(__HAIKU__)
+    rename_thread(find_thread(NULL), name);
+#elif defined(__Bitrig__) || defined(__DragonFly__) || defined(__FreeBSD__) || defined(__OpenBSD__)
+    pthread_set_name_np(pthread_self(), name);
+#elif defined(__NetBSD__)
+    pthread_setname_np(pthread_self(), "%s", (void*)name);
+#elif defined(__linux__) || defined(__CYGWIN__) || defined(__sun__) || defined(__glibc__) || defined(__managarm__)
+    int ret = pthread_setname_np(pthread_self(), name);
+    if (ret == ERANGE) {
+        char buf[16];
+        size_t const len = std::min<size_t>(std::strlen(name), sizeof(buf) - 1);
+        std::memcpy(buf, name, len);
+        buf[len] = '\0';
+        pthread_setname_np(pthread_self(), buf);
+    }
+#else
+    pthread_setname_np(pthread_self(), name);
+#endif
+}
+
+void SetCurrentThreadToPerformanceCores() {
+#if defined(__ANDROID__)
+    SetCurrentThreadCoreGroup(CoreGroup::Performance);
+#endif
+}
+
+void SetCurrentThreadToEfficiencyCores() {
+#if defined(__ANDROID__)
+    SetCurrentThreadCoreGroup(CoreGroup::Efficiency);
+#endif
+}
+
+void SetCurrentThreadToBackgroundWork() {
+#if defined(__ANDROID__)
+    SetCurrentThreadCoreGroup(CoreGroup::Efficiency);
+#endif
+}
+
+void SetCurrentThreadToAllCores() {
+#if defined(__ANDROID__)
+    ::Common::ADPF::RemoveCurrentThread();
+    SetCurrentThreadCoreGroup(CoreGroup::Unrestricted);
+#endif
+}
+
+void RefreshThreadPolicies() {
+#if defined(__ANDROID__)
+    CpuTopologyState& state = State();
+    std::scoped_lock topology_lock{state.topology_mutex};
+    RefreshTopologyLocked(state);
+
+    std::scoped_lock policy_lock{state.policy_mutex};
+    std::erase_if(state.policies, [&state](const ThreadPolicy& policy) {
+        bool gone = false;
+        if (policy.has_nice &&
+            setpriority(PRIO_PROCESS, static_cast<id_t>(policy.tid), policy.nice_value) != 0 &&
+            errno == ESRCH) {
+            gone = true;
+        }
+        if (!gone) {
+            ApplyCoreGroupLocked(state, policy.tid, policy.group, &gone);
+        }
+        return gone;
+    });
+    SnapshotCanaryLocked(state);
+#endif
+}
+
+void PollThreadPolicies() {
+#if defined(__ANDROID__)
+    static const bool needed = !KernelPreservesRequestedAffinity();
+    if (!needed) {
+        return;
+    }
+
+    CpuTopologyState& state = State();
+    if (!DueForPoll(state)) {
+        return;
+    }
+
+    pid_t tid;
+    cpu_set_t expected;
+    {
+        std::scoped_lock lock{state.topology_mutex};
+        if (!state.canary_valid) {
+            return;
+        }
+        tid = state.canary_tid;
+        expected = state.canary_mask;
+    }
+
+    cpu_set_t current;
+    CPU_ZERO(&current);
+    if (sched_getaffinity(tid, sizeof(current), &current) == 0 &&
+        std::memcmp(&current, &expected, sizeof(current)) == 0) {
+        return;
+    }
+    RefreshThreadPolicies();
+#endif
+}
+
+#ifdef ARCHITECTURE_x86_64
+#ifdef __clang__
+__attribute__((target("waitpkg,mwaitx")))
+#elif defined(__GNUC__)
+#pragma GCC target("waitpkg")
+#pragma GCC target("mwaitx")
+#endif
+bool Event::WaitFor(const std::chrono::nanoseconds time) {
+#ifdef _WIN32
+    auto const start = Common::X64::FencedRDTSC();
+    auto const& caps = Common::g_cpu_caps;
+    [[maybe_unused]] auto const end = start + Common::g_wall_clock.NsToTicks(time);
+    if (caps.monitorx) {
+        while (true) {
+            _mm_monitorx(reinterpret_cast<u64*>(std::addressof(is_set)), 0, 0);
+            if (!is_set.load()) {
+#ifdef _MSC_VER
+                auto const now = __rdtsc();
+#else
+                auto const now = _rdtsc();
+#endif
+                if (end > now) {
+                    u32 const cycles = std::min<u32>((std::numeric_limits<u32>::max)(), s64(end) - s64(now));
+                    _mm_mwaitx(1 << 1, 0u, cycles);
+                    if (!is_set.load())
+                        return false;
+                } else
+                    return false;
+            }
+            bool expected = true;
+            if (is_set.compare_exchange_weak(expected, false, std::memory_order_release))
+                return true;
+        }
+    } else if (caps.waitpkg) {
+        while (true) {
+            _umonitor(std::addressof(is_set));
+            if (!is_set.load() && !_umwait(0, end))
+                return false;
+            bool expected = true;
+            if (is_set.compare_exchange_weak(expected, false, std::memory_order_release))
+                return true;
+        }
+    } else {
+#ifdef _MSC_VER
+        while (!is_set.load() && end > __rdtsc())
+            Common::Windows::SleepForOneTick();
+#else
+        while (!is_set.load() && end > _rdtsc())
+            Common::Windows::SleepForOneTick();
+#endif
+        if (is_set.load())
+            Reset();
+        return true;
+    }
+#else
+    std::unique_lock lk{mutex};
+    if (!condvar.wait_for(lk, time, [this] { return is_set.load(); }))
+        return false;
+    is_set = false;
+    return true;
+#endif
+}
+#else
+bool Event::WaitFor(const std::chrono::nanoseconds time) {
+#ifdef _WIN32
+    auto const end = Common::g_wall_clock.GetTimeNS() + time;
+    while (!is_set.load() && end > Common::g_wall_clock.GetTimeNS())
+        Common::Windows::SleepForOneTick();
+    if (is_set.load())
+        Reset();
+    return true;
+#else
+    std::unique_lock lk{mutex};
+    if (!condvar.wait_for(lk, time, [this] { return is_set.load(); }))
+        return false;
+    is_set = false;
+    return true;
+#endif
+}
+#endif
+
+} // namespace Common
