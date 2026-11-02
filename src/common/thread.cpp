@@ -94,9 +94,8 @@ int NiceValueForPriority(Common::ThreadPriority priority) {
 #include <vector>
 
 namespace {
-[[maybe_unused]] constexpr size_t ANDROID_MINIMUM_PERFORMANCE_CORES = 6;
-
-constexpr std::chrono::nanoseconds ANDROID_POLICY_POLL_INTERVAL = std::chrono::milliseconds{5000};
+constexpr size_t ANDROID_MINIMUM_PERFORMANCE_CORES = 6;
+constexpr std::chrono::nanoseconds ANDROID_POLICY_POLL_INTERVAL{5000000000LL};
 
 enum class CoreGroup {
     Unrestricted,
@@ -138,7 +137,7 @@ struct CpuTopologyState {
     std::vector<ThreadPolicy> policies;
 };
 
-CpuTopologyState& State() {
+inline CpuTopologyState& State() {
     static CpuTopologyState* const state = new CpuTopologyState();
     return *state;
 }
@@ -254,8 +253,6 @@ void ComputeTopologyLocked(CpuTopologyState& state) {
     CPU_ZERO(&state.efficiency);
 
     if (sched_getaffinity(getpid(), sizeof(state.allowed), &state.allowed) != 0) {
-        LOG_WARNING(Common, "Could not query process CPU affinity: {}",
-                    ::Common::GetLastErrorMsg());
         return;
     }
 
@@ -265,7 +262,6 @@ void ComputeTopologyLocked(CpuTopologyState& state) {
         cores = CollectCores(state.allowed, total, "cpu_capacity", true);
     }
     if (cores.empty()) {
-        LOG_WARNING(Common, "Could not determine CPU topology, thread placement is disabled");
         return;
     }
 
@@ -279,15 +275,15 @@ void ComputeTopologyLocked(CpuTopologyState& state) {
     const s64 max_weight = cores.front().weight;
 
     for (const auto& core : cores) {
-        if (core.weight >= max_weight * 95 / 100) {
-            CPU_SET(core.cpu, &state.prime);
+        if (core.weight >= (max_weight * 95) / 100) {
+            CPU_SET(static_cast<size_t>(core.cpu), &state.prime);
         }
     }
     state.has_prime = CPU_COUNT(&state.prime) > 0;
 
     for (const auto& core : cores) {
-        if (!CPU_ISSET(core.cpu, &state.prime) && core.weight >= max_weight * 65 / 100) {
-            CPU_SET(core.cpu, &state.performance);
+        if (!CPU_ISSET(static_cast<size_t>(core.cpu), &state.prime) && core.weight >= (max_weight * 65) / 100) {
+            CPU_SET(static_cast<size_t>(core.cpu), &state.performance);
         }
     }
 
@@ -296,37 +292,24 @@ void ComputeTopologyLocked(CpuTopologyState& state) {
     }
 
     for (s32 cpu = 0; cpu < total; ++cpu) {
-        if (CPU_ISSET(cpu, &state.allowed) &&
-            !CPU_ISSET(cpu, &state.prime) &&
-            !CPU_ISSET(cpu, &state.performance)) {
-            CPU_SET(cpu, &state.efficiency);
+        const size_t c = static_cast<size_t>(cpu);
+        if (CPU_ISSET(c, &state.allowed) &&
+            !CPU_ISSET(c, &state.prime) &&
+            !CPU_ISSET(c, &state.performance)) {
+            CPU_SET(c, &state.efficiency);
         }
     }
 
     if (CPU_COUNT(&state.efficiency) == 0) {
         for (s32 cpu = 0; cpu < 4 && cpu < total; ++cpu) {
-            if (CPU_ISSET(cpu, &state.allowed) && !CPU_ISSET(cpu, &state.prime)) {
-                CPU_SET(cpu, &state.efficiency);
-            }
-        }
-    }
-
-    if (state.has_prime && CPU_COUNT(&state.prime) <= 2) {
-        s32 added = 0;
-        for (const auto& core : cores) {
-            if (!CPU_ISSET(core.cpu, &state.prime) && CPU_ISSET(core.cpu, &state.performance)) {
-                CPU_SET(core.cpu, &state.prime);
-                ++added;
-                if (added >= 2) {
-                    break;
-                }
+            const size_t c = static_cast<size_t>(cpu);
+            if (CPU_ISSET(c, &state.allowed) && !CPU_ISSET(c, &state.prime)) {
+                CPU_SET(c, &state.efficiency);
             }
         }
     }
 
     state.separated = CPU_COUNT(&state.efficiency) > 0 || state.has_prime;
-    LOG_INFO(Common, "Snapdragon 8 Elite Topology: {} prime cores, {} perf cores, {} eff cores",
-             CPU_COUNT(&state.prime), CPU_COUNT(&state.performance), CPU_COUNT(&state.efficiency));
 }
 
 void EnsureTopologyLocked(CpuTopologyState& state) {
@@ -583,3 +566,139 @@ void SetCurrentThreadToAllCores() {
 
 void RefreshThreadPolicies() {
 #if defined(__ANDROID__)
+    CpuTopologyState& state = State();
+    std::scoped_lock topology_lock{state.topology_mutex};
+    RefreshTopologyLocked(state);
+
+    std::scoped_lock policy_lock{state.policy_mutex};
+    std::erase_if(state.policies, [&state](const ThreadPolicy& policy) {
+        bool gone = false;
+        if (policy.has_nice &&
+            setpriority(PRIO_PROCESS, static_cast<id_t>(policy.tid), policy.nice_value) != 0 &&
+            errno == ESRCH) {
+            gone = true;
+        }
+        if (!gone) {
+            ApplyCoreGroupLocked(state, policy.tid, policy.group, &gone);
+        }
+        return gone;
+    });
+    SnapshotCanaryLocked(state);
+#endif
+}
+
+void PollThreadPolicies() {
+#if defined(__ANDROID__)
+    static const bool needed = !KernelPreservesRequestedAffinity();
+    if (!needed) {
+        return;
+    }
+
+    CpuTopologyState& state = State();
+    if (!DueForPoll(state)) {
+        return;
+    }
+
+    pid_t tid;
+    cpu_set_t expected;
+    {
+        std::scoped_lock lock{state.topology_mutex};
+        if (!state.canary_valid) {
+            return;
+        }
+        tid = state.canary_tid;
+        expected = state.canary_mask;
+    }
+
+    cpu_set_t current;
+    CPU_ZERO(&current);
+    if (sched_getaffinity(tid, sizeof(current), &current) == 0 &&
+        std::memcmp(&current, &expected, sizeof(current)) == 0) {
+        return;
+    }
+    RefreshThreadPolicies();
+#endif
+}
+
+#ifdef ARCHITECTURE_x86_64
+#ifdef __clang__
+__attribute__((target("waitpkg,mwaitx")))
+#elif defined(__GNUC__)
+#pragma GCC target("waitpkg")
+#pragma GCC target("mwaitx")
+#endif
+bool Event::WaitFor(const std::chrono::nanoseconds time) {
+#ifdef _WIN32
+    auto const start = Common::X64::FencedRDTSC();
+    auto const& caps = Common::g_cpu_caps;
+    [[maybe_unused]] auto const end = start + Common::g_wall_clock.NsToTicks(time);
+    if (caps.monitorx) {
+        while (true) {
+            _mm_monitorx(reinterpret_cast<u64*>(std::addressof(is_set)), 0, 0);
+            if (!is_set.load()) {
+#ifdef _MSC_VER
+                auto const now = __rdtsc();
+#else
+                auto const now = _rdtsc();
+#endif
+                if (end > now) {
+                    u32 const cycles = std::min<u32>((std::numeric_limits<u32>::max)(), s64(end) - s64(now));
+                    _mm_mwaitx(1 << 1, 0u, cycles);
+                    if (!is_set.load())
+                        return false;
+                } else
+                    return false;
+            }
+            bool expected = true;
+            if (is_set.compare_exchange_weak(expected, false, std::memory_order_release))
+                return true;
+        }
+    } else if (caps.waitpkg) {
+        while (true) {
+            _umonitor(std::addressof(is_set));
+            if (!is_set.load() && !_umwait(0, end))
+                return false;
+            bool expected = true;
+            if (is_set.compare_exchange_weak(expected, false, std::memory_order_release))
+                return true;
+        }
+    } else {
+#ifdef _MSC_VER
+        while (!is_set.load() && end > __rdtsc())
+            Common::Windows::SleepForOneTick();
+#else
+        while (!is_set.load() && end > _rdtsc())
+            Common::Windows::SleepForOneTick();
+#endif
+        if (is_set.load())
+            Reset();
+        return true;
+    }
+#else
+    std::unique_lock lk{mutex};
+    if (!condvar.wait_for(lk, time, [this] { return is_set.load(); }))
+        return false;
+    is_set = false;
+    return true;
+#endif
+}
+#else
+bool Event::WaitFor(const std::chrono::nanoseconds time) {
+#ifdef _WIN32
+    auto const end = Common::g_wall_clock.GetTimeNS() + time;
+    while (!is_set.load() && end > Common::g_wall_clock.GetTimeNS())
+        Common::Windows::SleepForOneTick();
+    if (is_set.load())
+        Reset();
+    return true;
+#else
+    std::unique_lock lk{mutex};
+    if (!condvar.wait_for(lk, time, [this] { return is_set.load(); }))
+        return false;
+    is_set = false;
+    return true;
+#endif
+}
+#endif
+
+} // namespace Common
