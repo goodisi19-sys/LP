@@ -95,7 +95,7 @@ int NiceValueForPriority(Common::ThreadPriority priority) {
 
 namespace {
 constexpr size_t ANDROID_MINIMUM_PERFORMANCE_CORES = 6;
-constexpr std::chrono::nanoseconds ANDROID_POLICY_POLL_INTERVAL{5000000000LL};
+constexpr std::chrono::nanoseconds ANDROID_POLICY_POLL_INTERVAL = std::chrono::seconds(5);
 
 enum class CoreGroup {
     Unrestricted,
