@@ -84,13 +84,11 @@ VkViewport GetViewportState(const Device& device, const Maxwell& regs, size_t in
                           src.swizzle.y == Maxwell::ViewportSwizzle::NegativeY;
 
     if (lower_left) {
-        // Flip by surface clip height
         y += conv(static_cast<f32>(regs.surface_clip.height));
         height = -height;
     }
 
     if (y_negate) {
-        // Flip by viewport height
         y += height;
         height = -height;
     }
@@ -131,11 +129,9 @@ VkRect2D GetScissorState(const Maxwell& regs, size_t index, u32 up_scale = 1, u3
     const bool lower_left = regs.window_origin.mode != Maxwell::WindowOrigin::Mode::UpperLeft;
     const s32 clip_height = regs.surface_clip.height;
 
-    // Flip coordinates if lower left
     s32 min_y = lower_left ? (clip_height - src.max_y) : src.min_y.Value();
     s32 max_y = lower_left ? (clip_height - src.min_y) : src.max_y.Value();
 
-    // Bound to render area
     min_y = (std::max)(min_y, 0);
     max_y = (std::max)(max_y, 0);
 
@@ -162,8 +158,6 @@ DrawParams MakeDrawParams(const Tegra::Engines::Maxwell3D::DrawManager::State& d
         .first_index = is_indexed ? draw_state.index_buffer.first : 0,
         .is_indexed = is_indexed,
     };
-    // 6 triangle vertices per quad, base vertex is part of the index
-    // See BindQuadIndexBuffer for more details
     if (draw_state.topology == Maxwell::PrimitiveTopology::Quads) {
         params.num_vertices = (params.num_vertices / 4) * 6;
         params.base_vertex = 0;
@@ -249,7 +243,6 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
         return;
     }
     std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
-    // update engine as channel may be different.
     pipeline->SetEngine(maxwell3d, gpu_memory);
     attribute_handle_pipeline = nullptr;
     attribute_handle_runs.clear();
@@ -279,7 +272,6 @@ void RasterizerVulkan::CollectAttributeHandleRuns(bool is_indexed) {
     if (total == 0) {
         return;
     }
-    // The handle is an integer attribute; sprite batches repeat it on every vertex of a quad.
     const VertexAttribute* source{};
     for (const auto& attr : regs.vertex_attrib_format) {
         if (attr.constant || attr.size == VertexAttribute::Size::Invalid) {
@@ -295,7 +287,6 @@ void RasterizerVulkan::CollectAttributeHandleRuns(bool is_indexed) {
         attribute_handle_runs.push_back({0, total, 0});
         return;
     }
-    // Only plain triangle lists are split; anything else keeps the handle of its first vertex.
     const u32 primitive_size =
         draw_state.topology == Maxwell::PrimitiveTopology::Triangles ? 3 : total;
     const GPUVAddr base_address = stream.Address() + source->offset;
@@ -332,8 +323,6 @@ void RasterizerVulkan::CollectAttributeHandleRuns(bool is_indexed) {
 }
 
 namespace {
-// Generations of draws whose geometry shader claims its primitive (Shader::Info::uses_gs_scratch).
-// 0 is never handed out: it marks a slot nobody has claimed.
 u32 NextGsGeneration() {
     static u32 generation = 0;
     if (++generation == 0) {
@@ -367,7 +356,6 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
                                                                                : VK_NULL_HANDLE};
         const auto record_draw = [this, gs_layout](const DrawParams& params) {
             if (gs_layout != VK_NULL_HANDLE) {
-                // Primitive ids start over with every instance: one draw and generation each.
                 for (u32 instance = 0; instance < params.num_instances; ++instance) {
                     scheduler.Record([params, instance, gs_layout,
                                       generation = NextGsGeneration()](vk::CommandBuffer cmdbuf) {
@@ -396,7 +384,6 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
             });
         };
         if (attribute_handle_pipeline && attribute_handle_runs.size() > 1) {
-            // The first run is already configured, each further one binds its own texture.
             for (size_t i = 0; i < attribute_handle_runs.size(); ++i) {
                 const AttributeHandleRun& run = attribute_handle_runs[i];
                 if (i != 0) {
@@ -418,7 +405,6 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
             record_draw(draw_params);
         }
 
-        // Log draw call
         if (GPU::Logging::IsActive() &&
             Settings::values.gpu_log_vulkan_calls.GetValue()) {
             const std::string params = is_indexed ?
@@ -446,8 +432,6 @@ void RasterizerVulkan::DrawIndirect() {
         if (pipeline && pipeline->UsesGsScratch()) {
             const VkPipelineLayout layout{pipeline->Layout()};
             if (params.include_count || params.is_byte_count) {
-                // The number of draws is in GPU memory: they share one generation, so the
-                // primitives of later ones lose their side effects.
                 static bool warned = false;
                 if (!std::exchange(warned, true)) {
                     LOG_WARNING(Render_Vulkan, "Indirect count draw with a geometry shader that "
@@ -458,7 +442,6 @@ void RasterizerVulkan::DrawIndirect() {
                     PushGsGeneration(cmdbuf, layout, generation);
                 });
             } else {
-                // One draw and generation each: primitive ids start over with every draw.
                 for (u32 draw = 0; draw < static_cast<u32>(params.max_draw_counts); ++draw) {
                     scheduler.Record([buffer_obj = buffer->Handle(),
                                       draw_offset = offset + draw * params.stride, params, layout,
@@ -514,7 +497,6 @@ void RasterizerVulkan::DrawIndirect() {
             }
         });
 
-        // Log indirect draw call
         if (GPU::Logging::IsActive() &&
             Settings::values.gpu_log_vulkan_calls.GetValue()) {
             const std::string log_params = fmt::format("drawCount={}, stride={}",
@@ -570,7 +552,6 @@ void RasterizerVulkan::DrawTexture() {
                                     .y = ScaleSrc(draw_texture_state.src_y1)}};
     Extent3D src_size = {static_cast<u32>(ScaleSrc(texture.size.width)),
                          static_cast<u32>(ScaleSrc(texture.size.height)), texture.size.depth};
-    // DrawTexture rectangles go through the fragment pipeline, scissor included.
     std::optional<VkRect2D> scissor;
     if (maxwell3d->regs.scissor_test[0].enable) {
         u32 up_scale = 1;
@@ -582,10 +563,6 @@ void RasterizerVulkan::DrawTexture() {
         scissor = GetScissorState(maxwell3d->regs, 0, up_scale, down_shift);
     }
 
-    // Drawing a texture 1:1 onto itself without blending changes nothing on hardware, but here
-    // it samples the image the render pass is writing to: undefined in Vulkan, and on tiled GPUs
-    // it reads whatever the image memory last held. Crysis Remastered does this every frame for
-    // its post-processing buffers (suspected cause of its map covering the whole screen).
     const auto& fb_images = framebuffer->Images();
     const bool src_is_target =
         std::find(fb_images.begin(), fb_images.begin() + framebuffer->NumImages(),
@@ -816,7 +793,6 @@ void RasterizerVulkan::DispatchCompute() {
 
     auto indirect_address = kepler_compute->GetIndirectComputeAddress();
     if (indirect_address) {
-        // DispatchIndirect
         static constexpr auto sync_info = VideoCommon::ObtainBufferSynchronize::FullSynchronize;
         const auto post_op = VideoCommon::ObtainBufferOperation::DiscardWrite;
         const auto [buffer, offset] =
@@ -865,7 +841,6 @@ void RasterizerVulkan::DispatchCompute() {
     });
     scheduler.Record(record_write_barrier);
 
-    // Log compute dispatch
     if (GPU::Logging::IsActive() &&
         Settings::values.gpu_log_vulkan_calls.GetValue()) {
         const std::string params = fmt::format("groupCountX={}, groupCountY={}, groupCountZ={}",
@@ -1351,7 +1326,6 @@ void RasterizerVulkan::UpdateDynamicStates() {
 
     if (device.IsExtExtendedDynamicState3EnablesSupported()) {
         using namespace Tegra::Engines;
-        // AMD Workaround: LogicOp incompatible with float render targets
         if (device.GetDriverID() == VkDriverIdKHR::VK_DRIVER_ID_AMD_OPEN_SOURCE ||
             device.GetDriverID() == VkDriverIdKHR::VK_DRIVER_ID_AMD_PROPRIETARY) {
             const auto has_float = std::any_of(
@@ -1405,7 +1379,6 @@ void RasterizerVulkan::HandleTransformFeedback() {
     query_cache.CounterEnable(VideoCommon::QueryType::StreamingByteCount,
                               regs.transform_feedback_enabled);
     if (regs.transform_feedback_enabled != 0) {
-        // Log extension usage for transform feedback
         if (GPU::Logging::IsActive()) {
             GPU::Logging::GPULogger::GetInstance().LogExtensionUsage(
                 "VK_EXT_transform_feedback", "HandleTransformFeedback");
@@ -1848,21 +1821,21 @@ void RasterizerVulkan::UpdateDepthBiasEnable(Tegra::Engines::Maxwell3D::Regs& re
     constexpr size_t LINE = 1;
     constexpr size_t POLYGON = 2;
     static constexpr std::array POLYGON_OFFSET_ENABLE_LUT = {
-        POINT,   // Points
-        LINE,    // Lines
-        LINE,    // LineLoop
-        LINE,    // LineStrip
-        POLYGON, // Triangles
-        POLYGON, // TriangleStrip
-        POLYGON, // TriangleFan
-        POLYGON, // Quads
-        POLYGON, // QuadStrip
-        POLYGON, // Polygon
-        LINE,    // LinesAdjacency
-        LINE,    // LineStripAdjacency
-        POLYGON, // TrianglesAdjacency
-        POLYGON, // TriangleStripAdjacency
-        POLYGON, // Patches
+        POINT,
+        LINE,
+        LINE,
+        LINE,
+        POLYGON,
+        POLYGON,
+        POLYGON,
+        POLYGON,
+        POLYGON,
+        POLYGON,
+        LINE,
+        LINE,
+        POLYGON,
+        POLYGON,
+        POLYGON,
     };
     const std::array enabled_lut{
         regs.polygon_offset_point_enable,
