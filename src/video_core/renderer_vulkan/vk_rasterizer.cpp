@@ -242,7 +242,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     if (!pipeline) {
         return;
     }
-    std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
+    std::scoped_lock lock{texture_cache.mutex};
     pipeline->SetEngine(maxwell3d, gpu_memory);
     attribute_handle_pipeline = nullptr;
     attribute_handle_runs.clear();
@@ -771,7 +771,7 @@ void RasterizerVulkan::DispatchCompute() {
     if (!pipeline) {
         return;
     }
-    std::scoped_lock lock{texture_cache.mutex, buffer_cache.rw_mutex};
+    std::scoped_lock lock{texture_cache.mutex};
     if (!pipeline->Configure(*kepler_compute, *gpu_memory, scheduler, buffer_cache,
                              texture_cache)) {
         return;
@@ -889,7 +889,6 @@ void RasterizerVulkan::FlushRegion(DAddr addr, u64 size, VideoCommon::CacheType 
         texture_cache.DownloadMemory(addr, size);
     }
     if ((True(which & VideoCommon::CacheType::BufferCache))) {
-        std::scoped_lock lock{buffer_cache.rw_mutex};
         buffer_cache.DownloadMemory(addr, size);
     }
     if ((True(which & VideoCommon::CacheType::QueryCache))) {
@@ -899,7 +898,6 @@ void RasterizerVulkan::FlushRegion(DAddr addr, u64 size, VideoCommon::CacheType 
 
 bool RasterizerVulkan::MustFlushRegion(DAddr addr, u64 size, VideoCommon::CacheType which) {
     if ((True(which & VideoCommon::CacheType::BufferCache))) {
-        std::scoped_lock lock{buffer_cache.rw_mutex};
         if (buffer_cache.IsRegionGpuModified(addr, size)) {
             return true;
         }
@@ -939,7 +937,6 @@ void RasterizerVulkan::InvalidateRegion(DAddr addr, u64 size, VideoCommon::Cache
         texture_cache.WriteMemory(addr, size);
     }
     if ((True(which & VideoCommon::CacheType::BufferCache))) {
-        std::scoped_lock lock{buffer_cache.rw_mutex};
         buffer_cache.WriteMemory(addr, size);
     }
     if ((True(which & VideoCommon::CacheType::QueryCache))) {
@@ -958,7 +955,6 @@ void RasterizerVulkan::InnerInvalidation(std::span<const std::pair<DAddr, std::s
         }
     }
     {
-        std::scoped_lock lock{buffer_cache.rw_mutex};
         for (const auto& [addr, size] : sequences) {
             buffer_cache.WriteMemory(addr, size);
         }
@@ -974,7 +970,6 @@ void RasterizerVulkan::InnerInvalidation(std::span<const std::pair<DAddr, std::s
 bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {
     DEBUG_ASSERT(addr != 0 || size != 0);
     {
-        std::scoped_lock lock{buffer_cache.rw_mutex};
         if (buffer_cache.OnCPUWrite(addr, size)) {
             return true;
         }
@@ -997,7 +992,6 @@ void RasterizerVulkan::OnCacheInvalidation(DAddr addr, u64 size) {
         texture_cache.WriteMemory(addr, size);
     }
     {
-        std::scoped_lock lock{buffer_cache.rw_mutex};
         buffer_cache.WriteMemory(addr, size);
     }
     pipeline_cache.InvalidateRegion(addr, size);
@@ -1029,7 +1023,6 @@ void RasterizerVulkan::UnmapMemory(DAddr addr, u64 size) {
         texture_cache.UnmapMemory(addr, size);
     }
     {
-        std::scoped_lock lock{buffer_cache.rw_mutex};
         buffer_cache.WriteMemory(addr, size);
     }
     pipeline_cache.OnCacheInvalidation(addr, size);
@@ -1119,7 +1112,6 @@ void RasterizerVulkan::TickFrame() {
         texture_cache.TickFrame();
     }
     {
-        std::scoped_lock lock{buffer_cache.rw_mutex};
         buffer_cache.TickFrame();
     }
 }
@@ -1153,7 +1145,6 @@ void RasterizerVulkan::AccelerateInlineToMemory(GPUVAddr address, size_t copy_si
     }
     gpu_memory->WriteBlockUnsafe(address, memory.data(), copy_size);
     {
-        std::unique_lock<std::shared_mutex> lock{buffer_cache.rw_mutex};
         if (!buffer_cache.InlineMemory(*cpu_addr, copy_size, memory)) {
             buffer_cache.WriteMemory(*cpu_addr, copy_size);
         }
@@ -1223,12 +1214,10 @@ AccelerateDMA::AccelerateDMA(BufferCache& buffer_cache_, TextureCache& texture_c
     : buffer_cache{buffer_cache_}, texture_cache{texture_cache_}, scheduler{scheduler_} {}
 
 bool AccelerateDMA::BufferClear(GPUVAddr src_address, u64 amount, u32 value) {
-    std::scoped_lock lock{buffer_cache.rw_mutex};
     return buffer_cache.DMAClear(src_address, amount, value);
 }
 
 bool AccelerateDMA::BufferCopy(GPUVAddr src_address, GPUVAddr dest_address, u64 amount) {
-    std::scoped_lock lock{buffer_cache.rw_mutex};
     return buffer_cache.DMACopy(src_address, dest_address, amount);
 }
 
@@ -1236,7 +1225,7 @@ template <bool IS_IMAGE_UPLOAD>
 bool AccelerateDMA::DmaBufferImageCopy(const Tegra::DMA::ImageCopy& copy_info,
                                        const Tegra::DMA::BufferOperand& buffer_operand,
                                        const Tegra::DMA::ImageOperand& image_operand) {
-    std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
+    std::scoped_lock lock{texture_cache.mutex};
     const auto image_id = texture_cache.DmaImageId(image_operand, IS_IMAGE_UPLOAD);
     if (image_id == VideoCommon::NULL_IMAGE_ID) {
         return false;
@@ -2146,7 +2135,7 @@ void RasterizerVulkan::UpdateVertexInput(Tegra::Engines::Maxwell3D::Regs& regs) 
 void RasterizerVulkan::InitializeChannel(Tegra::Control::ChannelState& channel) {
     CreateChannel(channel);
     {
-        std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
+        std::scoped_lock lock{texture_cache.mutex};
         texture_cache.CreateChannel(channel);
         buffer_cache.CreateChannel(channel);
     }
@@ -2159,7 +2148,7 @@ void RasterizerVulkan::BindChannel(Tegra::Control::ChannelState& channel) {
     const s32 channel_id = channel.bind_id;
     BindToChannel(channel_id);
     {
-        std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
+        std::scoped_lock lock{texture_cache.mutex};
         texture_cache.BindToChannel(channel_id);
         buffer_cache.BindToChannel(channel_id);
     }
@@ -2172,7 +2161,7 @@ void RasterizerVulkan::BindChannel(Tegra::Control::ChannelState& channel) {
 void RasterizerVulkan::ReleaseChannel(s32 channel_id) {
     EraseChannel(channel_id);
     {
-        std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
+        std::scoped_lock lock{texture_cache.mutex};
         texture_cache.EraseChannel(channel_id);
         buffer_cache.EraseChannel(channel_id);
     }
