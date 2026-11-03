@@ -426,16 +426,23 @@ static void* ChooseVirtualBase(size_t virtual_size) {
     const size_t upper = (Map39BitSize - virtual_size) / HugePageSize;
     const size_t range = upper - lower;
 
-    // Try up to 64 times to allocate memory at random addresses in the range.
-    for (int i = 0; i < 64; i++) {
+    // Увеличиваем количество попыток с 64 до 2048 для жесткого обхода ASLR на Android
+    for (int i = 0; i < 2048; i++) {
         // Calculate a possible location.
         uintptr_t hint_address = ((rng() % range) + lower) * HugePageSize;
 
         // Try to map.
-        // Note: we may be able to take advantage of MAP_FIXED_NOREPLACE here.
+#if defined(__ANDROID__)
+        // На Android убираем флаг MAP_NOCORE (он не поддерживается ядром и может вызывать отказ)
+        // и используем PROT_NONE для начального резервирования пространства.
+        void* map_pointer =
+            mmap(reinterpret_cast<void*>(hint_address), virtual_size, PROT_NONE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+#else
         void* map_pointer =
             mmap(reinterpret_cast<void*>(hint_address), virtual_size, PROT_READ | PROT_WRITE,
                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_NOCORE, -1, 0);
+#endif
 
         // If we successfully mapped, we're done.
         if (reinterpret_cast<uintptr_t>(map_pointer) == hint_address) {
@@ -725,11 +732,19 @@ HostMemory::HostMemory(size_t backing_size_, size_t virtual_size_)
             virtual_base_offset = virtual_base - impl->virtual_base;
         }
     } else {
+#if defined(__ANDROID__)
+        // Жесткая блокировка SoftMMU для Android.
+        // Если Fastmem не удалось выделить даже за 2048 попыток, эмулятор завершит работу,
+        // вместо того чтобы выдавать 5 FPS в игре из-за программной эмуляции памяти.
+        LOG_CRITICAL(HW_Memory, "FATAL: Android Fastmem allocation failed. SoftMMU fallback is strictly forbidden for NCE performance.");
+        std::abort();
+#else
         LOG_WARNING(HW_Memory, "Platform can support fastmem, but can't create it");
         fallback_buffer = true;
         backing_base = static_cast<u8*>(impl->Allocate(backing_size));
         virtual_base = nullptr;
         impl.reset();
+#endif
     }
 #endif
 }
