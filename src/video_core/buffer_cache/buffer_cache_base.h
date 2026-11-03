@@ -343,7 +343,7 @@ public:
         } while (channel_state->has_deleted_buffers);
     }
 
-    std::shared_mutex rw_mutex;
+    mutable std::recursive_mutex rw_mutex;
     std::atomic_flag lru_lock = ATOMIC_FLAG_INIT;
     std::atomic_flag state_lock = ATOMIC_FLAG_INIT;
     
