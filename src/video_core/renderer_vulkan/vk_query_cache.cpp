@@ -1594,7 +1594,7 @@ void QueryCacheRuntime::Barriers(bool is_prebarrier) {
     } else {
         impl->scheduler.Record([](vk::CommandBuffer cmdbuf) {
             cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                   VK_PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER_HOST, 0, WRITE_BARRIER);
+                                   vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER_HOST, 0, WRITE_BARRIER);
         });
     }
 }
