@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <memory>
 #include <numeric>
+#include <shared_mutex>
 
 #include "common/range_sets.inc"
 #include "shader_recompiler/shader_info.h"
@@ -74,6 +75,7 @@ void BufferCache<P>::RunGarbageCollector() {
 
 template <class P>
 void BufferCache<P>::TickFrame() {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     // Homebrew console apps don't create or bind any channels, so this will be nullptr.
     if (!channel_state) {
         return;
@@ -122,6 +124,7 @@ void BufferCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t size
 
 template <class P>
 void BufferCache<P>::WriteMemory(DAddr device_addr, u64 size) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     if (IsRegionGpuModified(device_addr, size)) {
         ClearDownload(device_addr, size);
         gpu_modified_ranges.Subtract(device_addr, size);
@@ -131,6 +134,7 @@ void BufferCache<P>::WriteMemory(DAddr device_addr, u64 size) {
 
 template <class P>
 void BufferCache<P>::CachedWriteMemory(DAddr device_addr, u64 size) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     const bool is_dirty = IsRegionRegistered(device_addr, size);
     if (!is_dirty) {
         return;
@@ -150,6 +154,7 @@ void BufferCache<P>::CachedWriteMemory(DAddr device_addr, u64 size) {
 
 template <class P>
 bool BufferCache<P>::OnCPUWrite(DAddr device_addr, u64 size) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     const bool is_dirty = IsRegionRegistered(device_addr, size);
     if (!is_dirty) {
         return false;
@@ -164,6 +169,7 @@ bool BufferCache<P>::OnCPUWrite(DAddr device_addr, u64 size) {
 template <class P>
 std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DAddr device_addr,
                                                                               u64 size) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     std::optional<VideoCore::RasterizerDownloadArea> area{};
     area.emplace();
     DAddr device_addr_start_aligned = Common::AlignDown(device_addr, Core::DEVICE_PAGESIZE);
@@ -183,6 +189,7 @@ std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DA
 
 template <class P>
 void BufferCache<P>::DownloadMemory(DAddr device_addr, u64 size) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     ForEachBufferInRange(device_addr, size, [&](BufferId, Buffer& buffer) {
         DownloadBufferMemory(buffer, device_addr, size);
     });
@@ -199,6 +206,7 @@ void BufferCache<P>::ClearDownload(DAddr device_addr, u64 size) {
 
 template <class P>
 bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 amount) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     const std::optional<DAddr> cpu_src_address = gpu_memory->GpuToCpuAddress(src_address);
     const std::optional<DAddr> cpu_dest_address = gpu_memory->GpuToCpuAddress(dest_address);
     if (!cpu_src_address || !cpu_dest_address) {
@@ -260,6 +268,7 @@ bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 am
 
 template <class P>
 bool BufferCache<P>::DMAClear(GPUVAddr dst_address, u64 amount, u32 value) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     const std::optional<DAddr> cpu_dst_address = gpu_memory->GpuToCpuAddress(dst_address);
     if (!cpu_dst_address) {
         return false;
@@ -295,6 +304,7 @@ std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainBuffer(GPUVAddr gpu_ad
 template <class P>
 std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainCPUBuffer(
     DAddr device_addr, u32 size, ObtainBufferSynchronize sync_info, ObtainBufferOperation post_op) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     const BufferId buffer_id = FindBuffer(device_addr, size, false);
     Buffer& buffer = slot_buffers[buffer_id];
 
@@ -342,6 +352,7 @@ void BufferCache<P>::DisableGraphicsUniformBuffer(size_t stage, u32 index) {
 
 template <class P>
 void BufferCache<P>::UpdateGraphicsBuffers(bool is_indexed) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     do {
         channel_state->has_deleted_buffers = false;
         DoUpdateGraphicsBuffers(is_indexed);
@@ -350,6 +361,7 @@ void BufferCache<P>::UpdateGraphicsBuffers(bool is_indexed) {
 
 template <class P>
 void BufferCache<P>::UpdateComputeBuffers() {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     do {
         channel_state->has_deleted_buffers = false;
         DoUpdateComputeBuffers();
@@ -714,6 +726,7 @@ void BufferCache<P>::PopAsyncBuffers() {
 
 template <class P>
 bool BufferCache<P>::IsRegionGpuModified(DAddr addr, size_t size) {
+    std::shared_lock<std::shared_mutex> lock(rw_mutex);
     bool is_dirty = false;
     gpu_modified_ranges.ForEachInRange(addr, size, [&](DAddr, DAddr) { is_dirty = true; });
     return is_dirty;
@@ -721,6 +734,7 @@ bool BufferCache<P>::IsRegionGpuModified(DAddr addr, size_t size) {
 
 template <class P>
 bool BufferCache<P>::IsRegionRegistered(DAddr addr, size_t size) {
+    std::shared_lock<std::shared_mutex> lock(rw_mutex);
     const DAddr end_addr = addr + size;
     const u64 page_end = Common::DivCeil(end_addr, CACHING_PAGESIZE);
     for (u64 page = addr >> CACHING_PAGEBITS; page < page_end;) {
@@ -742,6 +756,7 @@ bool BufferCache<P>::IsRegionRegistered(DAddr addr, size_t size) {
 
 template <class P>
 bool BufferCache<P>::IsRegionCpuModified(DAddr addr, size_t size) {
+    std::shared_lock<std::shared_mutex> lock(rw_mutex);
     return memory_tracker.IsRegionCpuModified(addr, size);
 }
 
@@ -1298,6 +1313,7 @@ void BufferCache<P>::BindHostComputeTextureBuffers() {
 
 template <class P>
 void BufferCache<P>::DoUpdateGraphicsBuffers(bool is_indexed) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     graphics_segments.clear();
     BufferOperations([&]() {
         if (is_indexed) {
@@ -1318,6 +1334,7 @@ void BufferCache<P>::DoUpdateGraphicsBuffers(bool is_indexed) {
 
 template <class P>
 void BufferCache<P>::DoUpdateComputeBuffers() {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     compute_segments.clear();
     BufferOperations([&]() {
         UpdateComputeUniformBuffers();
@@ -1556,6 +1573,7 @@ void BufferCache<P>::MarkWrittenBuffer(BufferId buffer_id, DAddr device_addr, u3
 
 template <class P>
 BufferId BufferCache<P>::FindBuffer(DAddr device_addr, u32 size, bool sparse_compatible) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     if (device_addr == 0) {
         return NULL_BUFFER_ID;
     }
@@ -1659,6 +1677,7 @@ typename BufferCache<P>::OverlapResult BufferCache<P>::ResolveOverlaps(DAddr dev
 template <class P>
 void BufferCache<P>::JoinOverlap(BufferId new_buffer_id, BufferId overlap_id,
                                  bool accumulate_stream_score) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     Buffer& new_buffer = slot_buffers[new_buffer_id];
     Buffer& overlap = slot_buffers[overlap_id];
     if (accumulate_stream_score) {
@@ -1683,6 +1702,7 @@ void BufferCache<P>::JoinOverlap(BufferId new_buffer_id, BufferId overlap_id,
 template <class P>
 BufferId BufferCache<P>::CreateBuffer(DAddr device_addr, u32 wanted_size,
                                       bool sparse_compatible) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     DAddr device_addr_end = Common::AlignUp(device_addr + wanted_size, CACHING_PAGESIZE);
     device_addr = Common::AlignDown(device_addr, CACHING_PAGESIZE);
     wanted_size = static_cast<u32>(device_addr_end - device_addr);
@@ -1746,6 +1766,7 @@ void BufferCache<P>::TouchBuffer(Buffer& buffer, BufferId buffer_id) noexcept {
 
 template <class P>
 bool BufferCache<P>::SynchronizeBuffer(Buffer& buffer, DAddr device_addr, u32 size) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     upload_copies.clear();
     u64 total_size_bytes = 0;
     u64 largest_copy = 0;
@@ -1949,6 +1970,7 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
 
 template <class P>
 void BufferCache<P>::DeleteBuffer(BufferId buffer_id, bool do_not_mark) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     if constexpr (requires { runtime.OnBufferDeleted(slot_buffers[buffer_id]); }) {
         runtime.OnBufferDeleted(slot_buffers[buffer_id]);
     }
@@ -2108,17 +2130,20 @@ std::span<u8> BufferCache<P>::ImmediateBuffer(size_t wanted_capacity) {
 
 template <class P>
 bool BufferCache<P>::HasFastUniformBufferBound(size_t stage, u32 binding_index) const noexcept {
+    std::shared_lock<std::shared_mutex> lock(const_cast<std::shared_mutex&>(rw_mutex));
     return ((channel_state->fast_bound_uniform_buffers[stage] >> binding_index) & 1u) != 0;
 }
 
 template <class P>
 std::pair<typename BufferCache<P>::Buffer*, u32> BufferCache<P>::GetDrawIndirectCount() {
+    std::shared_lock<std::shared_mutex> lock(rw_mutex);
     auto& buffer = slot_buffers[channel_state->count_buffer_binding.buffer_id];
     return std::make_pair(&buffer, buffer.Offset(channel_state->count_buffer_binding.device_addr));
 }
 
 template <class P>
 std::pair<typename BufferCache<P>::Buffer*, u32> BufferCache<P>::GetDrawIndirectBuffer() {
+    std::shared_lock<std::shared_mutex> lock(rw_mutex);
     auto& buffer = slot_buffers[channel_state->indirect_buffer_binding.buffer_id];
     return std::make_pair(&buffer,
                           buffer.Offset(channel_state->indirect_buffer_binding.device_addr));
