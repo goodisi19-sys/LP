@@ -8,10 +8,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <numeric>
 #include <span>
 #include <vector>
@@ -341,7 +343,10 @@ public:
         } while (channel_state->has_deleted_buffers);
     }
 
-    std::recursive_mutex mutex;
+    std::shared_mutex rw_mutex;
+    std::atomic_flag lru_lock = ATOMIC_FLAG_INIT;
+    std::atomic_flag state_lock = ATOMIC_FLAG_INIT;
+    
     Runtime& runtime;
     bool any_buffer_uploaded = false;
 
