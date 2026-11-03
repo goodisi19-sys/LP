@@ -1409,7 +1409,7 @@ void QueryCacheRuntime::ResumeHostConditionalRendering() {
 void QueryCacheRuntime::HostConditionalRenderingCompareValueImpl(VideoCommon::LookupData object,
                                                                  bool is_equal) {
     {
-        std::scoped_lock lk(impl->buffer_cache.mutex);
+        std::scoped_lock lk(impl->buffer_cache.rw_mutex);
         static constexpr auto sync_info = VideoCommon::ObtainBufferSynchronize::FullSynchronize;
         const auto post_op = VideoCommon::ObtainBufferOperation::DoNothing;
         const auto [buffer, offset] =
@@ -1443,7 +1443,7 @@ void QueryCacheRuntime::HostConditionalRenderingCompareBCImpl(DAddr address, boo
     u32 to_resolve_offset;
     const u32 resolve_size = compare_to_zero ? 8 : 24;
     {
-        std::scoped_lock lk(impl->buffer_cache.mutex);
+        std::scoped_lock lk(impl->buffer_cache.rw_mutex);
         const auto sync_info = VideoCommon::ObtainBufferSynchronize::FullSynchronize;
         const auto post_op = VideoCommon::ObtainBufferOperation::DoNothing;
         const auto [buffer, offset] =
@@ -1500,7 +1500,7 @@ bool QueryCacheRuntime::HostConditionalRenderingCompareValues(VideoCommon::Looku
     std::array<bool, 2> is_in_ac{};
     std::array<bool, 2> is_null{};
     {
-        std::scoped_lock lk(impl->buffer_cache.mutex);
+        std::scoped_lock lk(impl->buffer_cache.rw_mutex);
         for (size_t i = 0; i < 2; i++) {
             is_in_qc[i] = objects[i]->found_query != nullptr;
             is_in_bc[i] = !is_in_qc[i] && check_in_bc(objects[i]->address);
@@ -1594,7 +1594,7 @@ void QueryCacheRuntime::Barriers(bool is_prebarrier) {
     } else {
         impl->scheduler.Record([](vk::CommandBuffer cmdbuf) {
             cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                   vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER_HOST, 0, WRITE_BARRIER);
+                                   VK_PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER_HOST, 0, WRITE_BARRIER);
         });
     }
 }
@@ -1640,7 +1640,7 @@ void QueryCacheRuntime::SyncValues(std::span<SyncValuesType> values, VkBuffer ba
     }
 
     // Vulkan part.
-    std::scoped_lock lk(impl->buffer_cache.mutex);
+    std::scoped_lock lk(impl->buffer_cache.rw_mutex);
     impl->buffer_cache.BufferOperations([&] {
         impl->buffers_to_upload_to.clear();
         for (auto& pair : impl->little_cache) {
