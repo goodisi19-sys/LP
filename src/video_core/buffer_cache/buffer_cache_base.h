@@ -13,7 +13,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
 #include <numeric>
 #include <span>
 #include <vector>
@@ -145,7 +144,6 @@ public:
 
     std::array<u32, NUM_STAGES> enabled_storage_buffers{};
     std::array<u32, NUM_STAGES> written_storage_buffers{};
-    /// Storage buffers bound to the host's geometry shader scratch buffer (GS_SCRATCH_CBUF_INDEX).
     std::array<u32, NUM_STAGES> scratch_storage_buffers{};
     u32 enabled_compute_storage_buffers = 0;
     u32 written_compute_storage_buffers = 0;
@@ -175,8 +173,6 @@ public:
 
 template <class P>
 class BufferCache : public VideoCommon::ChannelSetupCaches<BufferCacheChannelInfo> {
-    // Page size for caching purposes.
-    // This is unrelated to the CPU page size and it can be changed as it seems optimal.
 #ifdef YUZU_LEGACY
     static constexpr u32 CACHING_PAGEBITS = 12;
 #else
@@ -203,8 +199,6 @@ class BufferCache : public VideoCommon::ChannelSetupCaches<BufferCacheChannelInf
 
     static constexpr s64 DEFAULT_EXPECTED_MEMORY = 512_MiB;
     static constexpr s64 DEFAULT_CRITICAL_MEMORY = 1_GiB;
-
-    // Debug Flags.
 
     static constexpr bool DISABLE_DOWNLOADS = true;
 
@@ -297,19 +291,15 @@ public:
                                                           ObtainBufferOperation post_op);
     void FlushCachedWrites();
 
-    /// Return true when there are uncommitted buffers to be downloaded
     [[nodiscard]] bool HasUncommittedFlushes() const noexcept;
 
     void AccumulateFlushes();
 
-    /// Return true when the caller should wait for async downloads
     [[nodiscard]] bool ShouldWaitAsyncFlushes() const noexcept;
 
-    /// Commit asynchronous downloads
     void CommitAsyncFlushes();
     void CommitAsyncFlushesHigh();
 
-    /// Pop asynchronous downloads
     void PopAsyncFlushes();
     void PopAsyncBuffers();
 
@@ -317,13 +307,10 @@ public:
 
     bool DMAClear(GPUVAddr src_address, u64 amount, u32 value);
 
-    /// Return true when a CPU region is modified from the GPU
     [[nodiscard]] bool IsRegionGpuModified(DAddr addr, size_t size);
 
-    /// Return true when a region is registered on the cache
     [[nodiscard]] bool IsRegionRegistered(DAddr addr, size_t size);
 
-    /// Return true when a CPU region is modified from the CPU
     [[nodiscard]] bool IsRegionCpuModified(DAddr addr, size_t size);
 
     void SetDrawIndirect(
@@ -384,121 +371,65 @@ private:
     }
 
     void RunGarbageCollector();
-
     void BindHostIndexBuffer();
-
     void BindHostVertexBuffers();
-
     void BindHostDrawIndirectBuffers();
-
     void BindHostGraphicsUniformBuffers(size_t stage);
-
     void BindHostGraphicsUniformBuffer(size_t stage, u32 index, u32 binding_index, bool needs_bind);
-
     void BindHostGraphicsStorageBuffers(size_t stage);
-
     void BindHostGraphicsTextureBuffers(size_t stage);
-
     void BindHostTransformFeedbackBuffers();
-
     void BindHostVertexBuffer(u32 index, Buffer& buffer, u32 offset, u32 size, u32 stride);
-
     void BindHostComputeUniformBuffers();
-
     void BindHostComputeStorageBuffers();
-
     void BindHostComputeTextureBuffers();
-
     void DoUpdateGraphicsBuffers(bool is_indexed);
-
     void DoUpdateComputeBuffers();
-
     void UpdateIndexBuffer();
-
     void UpdateVertexBuffers();
-
     void UpdateVertexBuffer(u32 index);
-
     void UpdateDrawIndirect();
-
     void UpdateUniformBuffers(size_t stage);
-
     void UpdateStorageBuffers(size_t stage);
-
     void UpdateTextureBuffers(size_t stage);
-
     void UpdateTransformFeedbackBuffers();
-
     void UpdateTransformFeedbackBuffer(u32 index);
-
     void UpdateComputeUniformBuffers();
-
     void UpdateComputeStorageBuffers();
-
     void UpdateComputeTextureBuffers();
-
     void MarkWrittenBuffer(BufferId buffer_id, DAddr device_addr, u32 size);
 
     [[nodiscard]] BufferId FindBuffer(DAddr device_addr, u32 size, bool sparse_compatible);
-
-
     [[nodiscard]] OverlapResult ResolveOverlaps(DAddr device_addr, u32 wanted_size);
-
     void JoinOverlap(BufferId new_buffer_id, BufferId overlap_id, bool accumulate_stream_score);
-
-    [[nodiscard]] BufferId CreateBuffer(DAddr device_addr, u32 wanted_size,
-                                        bool sparse_compatible);
-
+    [[nodiscard]] BufferId CreateBuffer(DAddr device_addr, u32 wanted_size, bool sparse_compatible);
     void Register(BufferId buffer_id);
-
     void Unregister(BufferId buffer_id);
 
     template <bool insert>
     void ChangeRegister(BufferId buffer_id);
 
     void TouchBuffer(Buffer& buffer, BufferId buffer_id) noexcept;
-
     bool SynchronizeBuffer(Buffer& buffer, DAddr device_addr, u32 size);
-
-    void UploadMemory(Buffer& buffer, u64 total_size_bytes, u64 largest_copy,
-                      std::span<BufferCopy> copies);
-
-    void ImmediateUploadMemory(Buffer& buffer, u64 largest_copy,
-                               std::span<const BufferCopy> copies);
-
+    void UploadMemory(Buffer& buffer, u64 total_size_bytes, u64 largest_copy, std::span<BufferCopy> copies);
+    void ImmediateUploadMemory(Buffer& buffer, u64 largest_copy, std::span<const BufferCopy> copies);
     void MappedUploadMemory(Buffer& buffer, u64 total_size_bytes, std::span<BufferCopy> copies);
-
     void DownloadBufferMemory(Buffer& buffer_id);
-
     void DownloadBufferMemory(Buffer& buffer_id, DAddr device_addr, u64 size);
-
     void DeleteBuffer(BufferId buffer_id, bool do_not_mark = false);
 
-    [[nodiscard]] Binding StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
-                                               bool is_written) const;
-
-    [[nodiscard]] TextureBufferBinding GetTextureBufferBinding(GPUVAddr gpu_addr, u32 size,
-                                                               PixelFormat format);
-
+    [[nodiscard]] Binding StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index, bool is_written) const;
+    [[nodiscard]] TextureBufferBinding GetTextureBufferBinding(GPUVAddr gpu_addr, u32 size, PixelFormat format);
     [[nodiscard]] std::span<const u8> ImmediateBufferWithData(DAddr device_addr, size_t size);
-
     [[nodiscard]] std::span<u8> ImmediateBuffer(size_t wanted_capacity);
-
     [[nodiscard]] bool HasFastUniformBufferBound(size_t stage, u32 binding_index) const noexcept;
-
     [[nodiscard]] Binding& VertexBufferSlot(u32 index);
-
     [[nodiscard]] const Binding& VertexBufferSlot(u32 index) const;
-
     void UpdateVertexBufferSlot(u32 index, const Binding& binding);
-
     void ClearDownload(DAddr base_addr, u64 size);
-
-    void InlineMemoryImplementation(DAddr dest_address, size_t copy_size,
-                                    std::span<const u8> inlined_buffer);
+    void InlineMemoryImplementation(DAddr dest_address, size_t copy_size, std::span<const u8> inlined_buffer);
 
     Tegra::MaxwellDeviceMemoryManager& device_memory;
-
     Common::SlotVector<Buffer> slot_buffers;
 #ifdef YUZU_LEGACY
     static constexpr size_t TICKS_TO_DESTROY = 6;
@@ -506,30 +437,21 @@ private:
     static constexpr size_t TICKS_TO_DESTROY = 8;
 #endif
     DelayedDestructionRing<Buffer, TICKS_TO_DESTROY> delayed_destruction_ring;
-
     const Tegra::Engines::Maxwell3D::DrawManager::IndirectParams* current_draw_indirect{};
-
     u32 last_index_count = 0;
-
     u32 enabled_vertex_buffers_mask = 0;
     u64 vertex_buffers_serial = 0;
     std::array<Binding, 32> v_buffer{};
-
     boost::container::small_vector<BufferCopy, 4> upload_copies;
-
     MemoryTracker memory_tracker;
     Common::RangeSet<DAddr> uncommitted_gpu_modified_ranges;
     Common::RangeSet<DAddr> gpu_modified_ranges;
     std::deque<Common::RangeSet<DAddr>> committed_gpu_modified_ranges;
-
-    // Async Buffers
     Common::OverlapRangeSet<DAddr> async_downloads;
     std::deque<std::optional<Async_Buffer>> async_buffers;
     std::deque<boost::container::small_vector<BufferCopy, 4>> pending_downloads;
     std::optional<Async_Buffer> current_buffer;
-
     std::deque<Async_Buffer> async_buffers_death_ring;
-
     size_t immediate_buffer_capacity = 0;
     Common::ScratchBuffer<u8> immediate_buffer_alloc;
 
