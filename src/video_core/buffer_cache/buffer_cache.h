@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <memory>
 #include <numeric>
-#include <shared_mutex>
+#include <mutex>
 
 #include "common/range_sets.inc"
 #include "shader_recompiler/shader_info.h"
@@ -75,7 +75,7 @@ void BufferCache<P>::RunGarbageCollector() {
 
 template <class P>
 void BufferCache<P>::TickFrame() {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     // Homebrew console apps don't create or bind any channels, so this will be nullptr.
     if (!channel_state) {
         return;
@@ -124,7 +124,7 @@ void BufferCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t size
 
 template <class P>
 void BufferCache<P>::WriteMemory(DAddr device_addr, u64 size) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     if (IsRegionGpuModified(device_addr, size)) {
         ClearDownload(device_addr, size);
         gpu_modified_ranges.Subtract(device_addr, size);
@@ -134,7 +134,7 @@ void BufferCache<P>::WriteMemory(DAddr device_addr, u64 size) {
 
 template <class P>
 void BufferCache<P>::CachedWriteMemory(DAddr device_addr, u64 size) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     const bool is_dirty = IsRegionRegistered(device_addr, size);
     if (!is_dirty) {
         return;
@@ -154,7 +154,7 @@ void BufferCache<P>::CachedWriteMemory(DAddr device_addr, u64 size) {
 
 template <class P>
 bool BufferCache<P>::OnCPUWrite(DAddr device_addr, u64 size) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     const bool is_dirty = IsRegionRegistered(device_addr, size);
     if (!is_dirty) {
         return false;
@@ -169,7 +169,7 @@ bool BufferCache<P>::OnCPUWrite(DAddr device_addr, u64 size) {
 template <class P>
 std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DAddr device_addr,
                                                                               u64 size) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     std::optional<VideoCore::RasterizerDownloadArea> area{};
     area.emplace();
     DAddr device_addr_start_aligned = Common::AlignDown(device_addr, Core::DEVICE_PAGESIZE);
@@ -189,7 +189,7 @@ std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DA
 
 template <class P>
 void BufferCache<P>::DownloadMemory(DAddr device_addr, u64 size) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     ForEachBufferInRange(device_addr, size, [&](BufferId, Buffer& buffer) {
         DownloadBufferMemory(buffer, device_addr, size);
     });
@@ -206,7 +206,7 @@ void BufferCache<P>::ClearDownload(DAddr device_addr, u64 size) {
 
 template <class P>
 bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 amount) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     const std::optional<DAddr> cpu_src_address = gpu_memory->GpuToCpuAddress(src_address);
     const std::optional<DAddr> cpu_dest_address = gpu_memory->GpuToCpuAddress(dest_address);
     if (!cpu_src_address || !cpu_dest_address) {
@@ -246,7 +246,6 @@ bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 am
         uncommitted_gpu_modified_ranges.Add(new_base_address, size);
     };
     gpu_modified_ranges.ForEachInRange(*cpu_src_address, amount, mirror);
-    // This subtraction in this order is important for overlapping copies.
     gpu_modified_ranges.Subtract(*cpu_dest_address, amount);
     const bool has_new_downloads = tmp_intervals.size() != 0;
     for (const auto& pair : tmp_intervals) {
@@ -268,7 +267,7 @@ bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 am
 
 template <class P>
 bool BufferCache<P>::DMAClear(GPUVAddr dst_address, u64 amount, u32 value) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     const std::optional<DAddr> cpu_dst_address = gpu_memory->GpuToCpuAddress(dst_address);
     if (!cpu_dst_address) {
         return false;
@@ -304,11 +303,10 @@ std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainBuffer(GPUVAddr gpu_ad
 template <class P>
 std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainCPUBuffer(
     DAddr device_addr, u32 size, ObtainBufferSynchronize sync_info, ObtainBufferOperation post_op) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     const BufferId buffer_id = FindBuffer(device_addr, size, false);
     Buffer& buffer = slot_buffers[buffer_id];
 
-    // synchronize op
     switch (sync_info) {
     case ObtainBufferSynchronize::FullSynchronize:
         SynchronizeBuffer(buffer, device_addr, size);
@@ -352,7 +350,7 @@ void BufferCache<P>::DisableGraphicsUniformBuffer(size_t stage, u32 index) {
 
 template <class P>
 void BufferCache<P>::UpdateGraphicsBuffers(bool is_indexed) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     do {
         channel_state->has_deleted_buffers = false;
         DoUpdateGraphicsBuffers(is_indexed);
@@ -361,7 +359,7 @@ void BufferCache<P>::UpdateGraphicsBuffers(bool is_indexed) {
 
 template <class P>
 void BufferCache<P>::UpdateComputeBuffers() {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     do {
         channel_state->has_deleted_buffers = false;
         DoUpdateComputeBuffers();
@@ -464,7 +462,6 @@ bool BufferCache<P>::BindGraphicsStorageBuffer(size_t stage, size_t ssbo_index, 
     }
 
     if (cbuf_index == Shader::GS_SCRATCH_CBUF_INDEX) {
-        // Not guest memory: BindHostGraphicsStorageBuffers binds the host's scratch buffer.
         channel_state->scratch_storage_buffers[stage] |= 1U << ssbo_index;
         return true;
     }
@@ -646,7 +643,6 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
                                 },
                                 buffer_id,
                             });
-                            // Align up to avoid cache conflicts
                             constexpr u64 align = 64ULL;
                             constexpr u64 mask = ~(align - 1ULL);
                             total_size_bytes += (new_size + align - 1) & mask;
@@ -726,7 +722,7 @@ void BufferCache<P>::PopAsyncBuffers() {
 
 template <class P>
 bool BufferCache<P>::IsRegionGpuModified(DAddr addr, size_t size) {
-    std::shared_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     bool is_dirty = false;
     gpu_modified_ranges.ForEachInRange(addr, size, [&](DAddr, DAddr) { is_dirty = true; });
     return is_dirty;
@@ -734,7 +730,7 @@ bool BufferCache<P>::IsRegionGpuModified(DAddr addr, size_t size) {
 
 template <class P>
 bool BufferCache<P>::IsRegionRegistered(DAddr addr, size_t size) {
-    std::shared_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     const DAddr end_addr = addr + size;
     const u64 page_end = Common::DivCeil(end_addr, CACHING_PAGESIZE);
     for (u64 page = addr >> CACHING_PAGEBITS; page < page_end;) {
@@ -756,7 +752,7 @@ bool BufferCache<P>::IsRegionRegistered(DAddr addr, size_t size) {
 
 template <class P>
 bool BufferCache<P>::IsRegionCpuModified(DAddr addr, size_t size) {
-    std::shared_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     return memory_tracker.IsRegionCpuModified(addr, size);
 }
 
@@ -966,12 +962,6 @@ void BufferCache<P>::BindHostGraphicsUniformBuffer(size_t stage, u32 index, u32 
             return alignment > 1 && (offset % alignment) != 0;
         }
     }();
-    // A uniform buffer the CPU has rewritten since its last upload is streamed even while the
-    // frame-wide statistic below keeps the cached path: the cached path would copy it into the
-    // host buffer, and that copy can't be moved ahead of the draws already using the buffer, so it
-    // ends the render pass and starts it again - on every draw that changes it (thousands of times
-    // a second in big games, each one costly on mobile drivers). Up to a full 64 KiB constant
-    // buffer: in Breath of the Wild every one still copied was that size.
     const bool small_and_dirty = has_host_buffer && size <= 64_KiB &&
                                  memory_tracker.IsRegionCpuModified(device_addr, size);
     const bool use_fast_buffer = needs_alignment_stream
@@ -981,12 +971,10 @@ void BufferCache<P>::BindHostGraphicsUniformBuffer(size_t stage, u32 index, u32 
     if (use_fast_buffer) {
         if constexpr (IS_OPENGL) {
             if (runtime.HasFastBufferSubData()) {
-                // Fast path for Nvidia
                 const bool should_fast_bind =
                     !HasFastUniformBufferBound(stage, binding_index) ||
                     channel_state->uniform_buffer_binding_sizes[stage][binding_index] != size;
                 if (should_fast_bind) {
-                    // We only have to bind when the currently bound buffer is not the fast version
                     channel_state->fast_bound_uniform_buffers[stage] |= 1u << binding_index;
                     channel_state->uniform_buffer_binding_sizes[stage][binding_index] = size;
                     runtime.BindFastUniformBuffer(stage, binding_index, size);
@@ -998,17 +986,13 @@ void BufferCache<P>::BindHostGraphicsUniformBuffer(size_t stage, u32 index, u32 
         }
         channel_state->fast_bound_uniform_buffers[stage] |= 1u << binding_index;
         channel_state->uniform_buffer_binding_sizes[stage][binding_index] = size;
-        // Stream buffer path to avoid stalling on non-Nvidia drivers or Vulkan
         const std::span<u8> span = runtime.BindMappedUniformBuffer(stage, binding_index, size);
         device_memory.ReadBlockUnsafe(device_addr, span.data(), size);
         return;
     }
-    // Classic cached path
     if (SynchronizeBuffer(buffer, device_addr, size)) {
         ++channel_state->uniform_cache_hits[0];
     }
-    // Skip binding if it's not needed and if the bound buffer is not the fast version
-    // This exists to avoid instances where the fast buffer is bound and a GPU write happens
     needs_bind |= HasFastUniformBufferBound(stage, binding_index);
     if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
         needs_bind |= channel_state->uniform_buffer_binding_sizes[stage][binding_index] != size;
@@ -1017,7 +1001,6 @@ void BufferCache<P>::BindHostGraphicsUniformBuffer(size_t stage, u32 index, u32 
         return;
     }
     if constexpr (IS_OPENGL) {
-        // Mark the index as dirty if offset doesn't match
         const bool is_copy_bind = offset != 0 && !runtime.SupportsNonZeroUniformOffset();
         channel_state->dirty_uniform_buffers[stage] |= (is_copy_bind ? 1U : 0U) << index;
     }
@@ -1206,7 +1189,6 @@ void BufferCache<P>::BindHostTransformFeedbackBuffers() {
 template <class P>
 void BufferCache<P>::BindHostComputeUniformBuffers() {
     if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
-        // Mark all uniform buffers as dirty
         channel_state->dirty_uniform_buffers.fill(~u32{0});
         channel_state->fast_bound_uniform_buffers.fill(0);
     }
@@ -1313,7 +1295,7 @@ void BufferCache<P>::BindHostComputeTextureBuffers() {
 
 template <class P>
 void BufferCache<P>::DoUpdateGraphicsBuffers(bool is_indexed) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     graphics_segments.clear();
     BufferOperations([&]() {
         if (is_indexed) {
@@ -1334,7 +1316,7 @@ void BufferCache<P>::DoUpdateGraphicsBuffers(bool is_indexed) {
 
 template <class P>
 void BufferCache<P>::DoUpdateComputeBuffers() {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     compute_segments.clear();
     BufferOperations([&]() {
         UpdateComputeUniformBuffers();
@@ -1345,8 +1327,6 @@ void BufferCache<P>::DoUpdateComputeBuffers() {
 
 template <class P>
 void BufferCache<P>::UpdateIndexBuffer() {
-    // We have to check for the dirty flags and index count
-    // The index count is currently changed without updating the dirty flags
     const auto& draw_state = maxwell3d->draw_manager.draw_state;
     const auto& index_buffer_ref = draw_state.index_buffer;
     auto& flags = maxwell3d->dirty.flags;
@@ -1413,7 +1393,7 @@ void BufferCache<P>::UpdateVertexBuffer(u32 index) {
     const GPUVAddr gpu_addr_end = limit.Address() + 1;
     const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr_begin);
     const u32 address_size = static_cast<u32>(gpu_addr_end - gpu_addr_begin);
-    u32 size = address_size; // TODO: Analyze stride and number of vertices
+    u32 size = address_size;
     if (array.enable == 0 || size == 0 || !device_addr) {
         channel_state->vertex_buffers[index] = NULL_BINDING;
         UpdateVertexBufferSlot(index, NULL_BINDING);
@@ -1459,14 +1439,11 @@ void BufferCache<P>::UpdateUniformBuffers(size_t stage) {
     ForEachEnabledBit(channel_state->enabled_uniform_buffer_masks[stage], [&](u32 index) {
         Binding& binding = channel_state->uniform_buffers[stage][index];
         if (binding.buffer_id) {
-            // Already updated
             return;
         }
-        // Mark as dirty
         if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
             channel_state->dirty_uniform_buffers[stage] |= 1U << index;
         }
-        // Resolve buffer
         binding.buffer_id = FindBuffer(binding.device_addr, binding.size, false);
     });
 }
@@ -1477,7 +1454,6 @@ void BufferCache<P>::UpdateStorageBuffers(size_t stage) {
         if (((channel_state->scratch_storage_buffers[stage] >> index) & 1) != 0) {
             return;
         }
-        // Resolve buffer
         Binding& binding = channel_state->storage_buffers[stage][index];
         const BufferId buffer_id = FindBuffer(binding.device_addr, binding.size, false);
         binding.buffer_id = buffer_id;
@@ -1543,7 +1519,6 @@ void BufferCache<P>::UpdateComputeUniformBuffers() {
 template <class P>
 void BufferCache<P>::UpdateComputeStorageBuffers() {
     ForEachEnabledBit(channel_state->enabled_compute_storage_buffers, [&](u32 index) {
-        // Resolve buffer
         Binding& binding = channel_state->compute_storage_buffers[index];
         binding.buffer_id = FindBuffer(binding.device_addr, binding.size, false);
         const bool is_written =
@@ -1573,7 +1548,7 @@ void BufferCache<P>::MarkWrittenBuffer(BufferId buffer_id, DAddr device_addr, u3
 
 template <class P>
 BufferId BufferCache<P>::FindBuffer(DAddr device_addr, u32 size, bool sparse_compatible) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     if (device_addr == 0) {
         return NULL_BUFFER_ID;
     }
@@ -1655,8 +1630,6 @@ typename BufferCache<P>::OverlapResult BufferCache<P>::ResolveOverlaps(DAddr dev
         }
         stream_score += overlap.StreamScore();
         if (stream_score > STREAM_LEAP_THRESHOLD && !has_stream_leap) {
-            // When this memory region has been joined a bunch of times, we assume it's being used
-            // as a stream buffer. Increase the size to skip constantly recreating buffers.
             has_stream_leap = true;
             if (expands_right) {
                 expand_begin(CACHING_PAGESIZE * 128);
@@ -1677,7 +1650,7 @@ typename BufferCache<P>::OverlapResult BufferCache<P>::ResolveOverlaps(DAddr dev
 template <class P>
 void BufferCache<P>::JoinOverlap(BufferId new_buffer_id, BufferId overlap_id,
                                  bool accumulate_stream_score) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     Buffer& new_buffer = slot_buffers[new_buffer_id];
     Buffer& overlap = slot_buffers[overlap_id];
     if (accumulate_stream_score) {
@@ -1702,7 +1675,7 @@ void BufferCache<P>::JoinOverlap(BufferId new_buffer_id, BufferId overlap_id,
 template <class P>
 BufferId BufferCache<P>::CreateBuffer(DAddr device_addr, u32 wanted_size,
                                       bool sparse_compatible) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     DAddr device_addr_end = Common::AlignUp(device_addr + wanted_size, CACHING_PAGESIZE);
     device_addr = Common::AlignDown(device_addr, CACHING_PAGESIZE);
     wanted_size = static_cast<u32>(device_addr_end - device_addr);
@@ -1766,7 +1739,7 @@ void BufferCache<P>::TouchBuffer(Buffer& buffer, BufferId buffer_id) noexcept {
 
 template <class P>
 bool BufferCache<P>::SynchronizeBuffer(Buffer& buffer, DAddr device_addr, u32 size) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     upload_copies.clear();
     u64 total_size_bytes = 0;
     u64 largest_copy = 0;
@@ -1852,7 +1825,6 @@ void BufferCache<P>::MappedUploadMemory([[maybe_unused]] Buffer& buffer,
                 DownloadBufferMemory(buffer, device_addr, copy.size);
             }
             device_memory.ReadBlockUnsafe(device_addr, src_pointer, copy.size);
-            // Apply the staging offset
             copy.src_offset += upload_staging.offset;
         }
         const bool can_reorder = runtime.CanReorderUpload(buffer, copies);
@@ -1925,7 +1897,6 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
                     .dst_offset = total_size_bytes,
                     .size = new_size,
                 });
-                // Align up to avoid cache conflicts
                 constexpr u64 align = 64ULL;
                 constexpr u64 mask = ~(align - 1ULL);
                 total_size_bytes += (new_size + align - 1) & mask;
@@ -1945,7 +1916,6 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
         const u8* const mapped_memory = download_staging.mapped_span.data();
         const std::span<BufferCopy> copies_span(copies.data(), copies.data() + copies.size());
         for (BufferCopy& copy : copies) {
-            // Modify copies to have the staging offset in mind
             copy.dst_offset += download_staging.offset;
             buffer.MarkUsage(copy.src_offset, copy.size);
         }
@@ -1953,7 +1923,6 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
         runtime.Finish();
         for (const BufferCopy& copy : copies) {
             const DAddr copy_device_addr = buffer.CpuAddr() + copy.src_offset;
-            // Undo the modified offset
             const u64 dst_offset = copy.dst_offset - download_staging.offset;
             const u8* copy_mapped_memory = mapped_memory + dst_offset;
             device_memory.WriteBlockUnsafe(copy_device_addr, copy_mapped_memory, copy.size);
@@ -1970,7 +1939,7 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
 
 template <class P>
 void BufferCache<P>::DeleteBuffer(BufferId buffer_id, bool do_not_mark) {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     if constexpr (requires { runtime.OnBufferDeleted(slot_buffers[buffer_id]); }) {
         runtime.OnBufferDeleted(slot_buffers[buffer_id]);
     }
@@ -2004,7 +1973,6 @@ void BufferCache<P>::DeleteBuffer(BufferId buffer_id, bool do_not_mark) {
     replace(channel_state->compute_uniform_buffers);
     replace(channel_state->compute_storage_buffers);
 
-    // Mark the whole buffer as CPU written to stop tracking CPU writes
     if (!do_not_mark) {
         Buffer& buffer = slot_buffers[buffer_id];
         memory_tracker.MarkRegionAsCpuModified(buffer.CpuAddr(), buffer.SizeBytes());
@@ -2061,7 +2029,6 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
         return (std::min)(memory_layout_size, static_cast<u32>(8_MiB));
     }();
 
-    // Alignment only applies to the offset of the buffer
     const u32 alignment = runtime.GetStorageBufferAlignment();
     const GPUVAddr aligned_gpu_addr = Common::AlignDown(gpu_addr, alignment);
     const u32 aligned_size = static_cast<u32>(gpu_addr - aligned_gpu_addr) + size;
@@ -2074,7 +2041,6 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
     const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
     ASSERT_MSG(device_addr, "Unaligned storage buffer address not found for cbuf index {}",
                cbuf_index);
-    // The end address used for size calculation does not need to be aligned
     const DAddr cpu_end = Common::AlignUp(*device_addr + size, Core::DEVICE_PAGESIZE);
 
     u32 binding_size = static_cast<u32>(cpu_end - *aligned_device_addr);
@@ -2130,20 +2096,20 @@ std::span<u8> BufferCache<P>::ImmediateBuffer(size_t wanted_capacity) {
 
 template <class P>
 bool BufferCache<P>::HasFastUniformBufferBound(size_t stage, u32 binding_index) const noexcept {
-    std::shared_lock<std::shared_mutex> lock(const_cast<std::shared_mutex&>(rw_mutex));
+    std::unique_lock<std::recursive_mutex> lock(const_cast<std::recursive_mutex&>(rw_mutex));
     return ((channel_state->fast_bound_uniform_buffers[stage] >> binding_index) & 1u) != 0;
 }
 
 template <class P>
 std::pair<typename BufferCache<P>::Buffer*, u32> BufferCache<P>::GetDrawIndirectCount() {
-    std::shared_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     auto& buffer = slot_buffers[channel_state->count_buffer_binding.buffer_id];
     return std::make_pair(&buffer, buffer.Offset(channel_state->count_buffer_binding.device_addr));
 }
 
 template <class P>
 std::pair<typename BufferCache<P>::Buffer*, u32> BufferCache<P>::GetDrawIndirectBuffer() {
-    std::shared_lock<std::shared_mutex> lock(rw_mutex);
+    std::unique_lock<std::recursive_mutex> lock(rw_mutex);
     auto& buffer = slot_buffers[channel_state->indirect_buffer_binding.buffer_id];
     return std::make_pair(&buffer,
                           buffer.Offset(channel_state->indirect_buffer_binding.device_addr));
