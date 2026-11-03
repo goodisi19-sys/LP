@@ -9,6 +9,7 @@
 #include <array>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 
 #include <fmt/format.h>
 
@@ -247,7 +248,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     if (!pipeline) {
         return;
     }
-    std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+    std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
     // update engine as channel may be different.
     pipeline->SetEngine(maxwell3d, gpu_memory);
     attribute_handle_pipeline = nullptr;
@@ -793,7 +794,7 @@ void RasterizerVulkan::DispatchCompute() {
     if (!pipeline) {
         return;
     }
-    std::scoped_lock lock{texture_cache.mutex, buffer_cache.mutex};
+    std::scoped_lock lock{texture_cache.mutex, buffer_cache.rw_mutex};
     if (!pipeline->Configure(*kepler_compute, *gpu_memory, scheduler, buffer_cache,
                              texture_cache)) {
         return;
@@ -801,29 +802,13 @@ void RasterizerVulkan::DispatchCompute() {
 
     const auto& qmd{kepler_compute->launch_description};
 
-    // Closes the Dispatch -> Draw gap: READ_BARRIER above only protects this dispatch's own
-    // reads from earlier writes. Nothing downstream previously protected a later draw (or
-    // another dispatch) from THIS dispatch's own writes - storage buffers a compute shader
-    // writes (e.g. a GPU-driven instance/culling buffer) could still be mid-write, not yet
-    // visible, when a subsequent vkCmdDraw*/vkCmdDrawIndirect* reads them. Unlike a shader
-    // translation bug this produces no log output at all - just a timing-dependent race,
-    // consistent with reports of geometry (e.g. procedurally placed grass) flickering in and
-    // out at random instead of being consistently wrong. Mirrors the existing broad
-    // READ_BARRIER/WRITE_BARRIER idiom already used around buffer copies in
-    // vk_buffer_cache.cpp rather than inventing a new, narrower one. The destination masks here
-    // and on both READ_BARRIERs include WRITE too: a read-only destination leaves
-    // write-after-write unordered (e.g. a transfer clearing a counter / indirect-args buffer
-    // that the next dispatch then writes, or two dispatches writing the same buffer).
     static constexpr VkMemoryBarrier WRITE_BARRIER{
         .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .pNext = nullptr,
         .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
         .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
     };
-    // dst stage must also cover TRANSFER: buffer_cache can serve this dispatch's output to a
-    // later consumer via vkCmdCopyBuffer (e.g. buffer_cache growth/rebase, or a download for
-    // CPU readback) rather than a direct shader read - GRAPHICS_COMPUTE alone left that path
-    // unsynchronized.
+
     const auto record_write_barrier = [](vk::CommandBuffer cmdbuf) {
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, 0, WRITE_BARRIER);
@@ -837,12 +822,7 @@ void RasterizerVulkan::DispatchCompute() {
         const auto [buffer, offset] =
             buffer_cache.ObtainBuffer(*indirect_address, 12, sync_info, post_op);
         scheduler.RequestOutsideRenderPassOperationContext();
-        // Mirrors the READ_BARRIER the direct Dispatch() path below already has - this dispatch's
-        // shader can read images/buffers a preceding draw (or transfer) just wrote (e.g. a
-        // GPU-driven post-process pass sampling a render target), and without this nothing
-        // guaranteed those writes were visible yet. Only the direct-dispatch path had this;
-        // DispatchIndirect fell straight through to recording the dispatch with no read barrier
-        // at all.
+
         static constexpr VkMemoryBarrier READ_BARRIER{
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
             .pNext = nullptr,
@@ -934,7 +914,7 @@ void RasterizerVulkan::FlushRegion(DAddr addr, u64 size, VideoCommon::CacheType 
         texture_cache.DownloadMemory(addr, size);
     }
     if ((True(which & VideoCommon::CacheType::BufferCache))) {
-        std::scoped_lock lock{buffer_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex};
         buffer_cache.DownloadMemory(addr, size);
     }
     if ((True(which & VideoCommon::CacheType::QueryCache))) {
@@ -944,7 +924,7 @@ void RasterizerVulkan::FlushRegion(DAddr addr, u64 size, VideoCommon::CacheType 
 
 bool RasterizerVulkan::MustFlushRegion(DAddr addr, u64 size, VideoCommon::CacheType which) {
     if ((True(which & VideoCommon::CacheType::BufferCache))) {
-        std::scoped_lock lock{buffer_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex};
         if (buffer_cache.IsRegionGpuModified(addr, size)) {
             return true;
         }
@@ -984,7 +964,7 @@ void RasterizerVulkan::InvalidateRegion(DAddr addr, u64 size, VideoCommon::Cache
         texture_cache.WriteMemory(addr, size);
     }
     if ((True(which & VideoCommon::CacheType::BufferCache))) {
-        std::scoped_lock lock{buffer_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex};
         buffer_cache.WriteMemory(addr, size);
     }
     if ((True(which & VideoCommon::CacheType::QueryCache))) {
@@ -1003,7 +983,7 @@ void RasterizerVulkan::InnerInvalidation(std::span<const std::pair<DAddr, std::s
         }
     }
     {
-        std::scoped_lock lock{buffer_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex};
         for (const auto& [addr, size] : sequences) {
             buffer_cache.WriteMemory(addr, size);
         }
@@ -1019,7 +999,7 @@ void RasterizerVulkan::InnerInvalidation(std::span<const std::pair<DAddr, std::s
 bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {
     DEBUG_ASSERT(addr != 0 || size != 0);
     {
-        std::scoped_lock lock{buffer_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex};
         if (buffer_cache.OnCPUWrite(addr, size)) {
             return true;
         }
@@ -1042,7 +1022,7 @@ void RasterizerVulkan::OnCacheInvalidation(DAddr addr, u64 size) {
         texture_cache.WriteMemory(addr, size);
     }
     {
-        std::scoped_lock lock{buffer_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex};
         buffer_cache.WriteMemory(addr, size);
     }
     pipeline_cache.InvalidateRegion(addr, size);
@@ -1074,7 +1054,7 @@ void RasterizerVulkan::UnmapMemory(DAddr addr, u64 size) {
         texture_cache.UnmapMemory(addr, size);
     }
     {
-        std::scoped_lock lock{buffer_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex};
         buffer_cache.WriteMemory(addr, size);
     }
     pipeline_cache.OnCacheInvalidation(addr, size);
@@ -1117,8 +1097,6 @@ void RasterizerVulkan::FlushAndInvalidateRegion(DAddr addr, u64 size,
 }
 
 void RasterizerVulkan::WaitForIdle() {
-    // Everything but wait pixel operations. This intentionally includes FRAGMENT_SHADER_BIT because
-    // fragment shaders can still write storage buffers.
     VkPipelineStageFlags flags =
         VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
         VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT |
@@ -1140,12 +1118,10 @@ void RasterizerVulkan::WaitForIdle() {
 }
 
 void RasterizerVulkan::FragmentBarrier() {
-    // We already put barriers when a render pass finishes
     scheduler.RequestOutsideRenderPassOperationContext();
 }
 
 void RasterizerVulkan::TiledCacheBarrier() {
-    // TODO: Implementing tiled barriers requires rewriting a good chunk of the Vulkan backend
 }
 
 void RasterizerVulkan::FlushCommands() {
@@ -1168,7 +1144,7 @@ void RasterizerVulkan::TickFrame() {
         texture_cache.TickFrame();
     }
     {
-        std::scoped_lock lock{buffer_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex};
         buffer_cache.TickFrame();
     }
 }
@@ -1202,7 +1178,7 @@ void RasterizerVulkan::AccelerateInlineToMemory(GPUVAddr address, size_t copy_si
     }
     gpu_memory->WriteBlockUnsafe(address, memory.data(), copy_size);
     {
-        std::unique_lock<std::recursive_mutex> lock{buffer_cache.mutex};
+        std::unique_lock<std::shared_mutex> lock{buffer_cache.rw_mutex};
         if (!buffer_cache.InlineMemory(*cpu_addr, copy_size, memory)) {
             buffer_cache.WriteMemory(*cpu_addr, copy_size);
         }
@@ -1272,12 +1248,12 @@ AccelerateDMA::AccelerateDMA(BufferCache& buffer_cache_, TextureCache& texture_c
     : buffer_cache{buffer_cache_}, texture_cache{texture_cache_}, scheduler{scheduler_} {}
 
 bool AccelerateDMA::BufferClear(GPUVAddr src_address, u64 amount, u32 value) {
-    std::scoped_lock lock{buffer_cache.mutex};
+    std::scoped_lock lock{buffer_cache.rw_mutex};
     return buffer_cache.DMAClear(src_address, amount, value);
 }
 
 bool AccelerateDMA::BufferCopy(GPUVAddr src_address, GPUVAddr dest_address, u64 amount) {
-    std::scoped_lock lock{buffer_cache.mutex};
+    std::scoped_lock lock{buffer_cache.rw_mutex};
     return buffer_cache.DMACopy(src_address, dest_address, amount);
 }
 
@@ -1285,7 +1261,7 @@ template <bool IS_IMAGE_UPLOAD>
 bool AccelerateDMA::DmaBufferImageCopy(const Tegra::DMA::ImageCopy& copy_info,
                                        const Tegra::DMA::BufferOperand& buffer_operand,
                                        const Tegra::DMA::ImageOperand& image_operand) {
-    std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+    std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
     const auto image_id = texture_cache.DmaImageId(image_operand, IS_IMAGE_UPLOAD);
     if (image_id == VideoCommon::NULL_IMAGE_ID) {
         return false;
@@ -1567,8 +1543,6 @@ void RasterizerVulkan::UpdateDepthBias(Tegra::Engines::Maxwell3D::Regs& regs) {
         const u64* it = std::find(start, end, program_id);
 
         if (it != end) {
-            // the base formulas can be obtained from here:
-            //   https://docs.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-output-merger-stage-depth-bias
             const double rescale_factor =
                 static_cast<double>(1ULL << (32 - 24)) / (static_cast<double>(0x1.ep+127));
             units = static_cast<float>(static_cast<double>(units) * rescale_factor);
@@ -1645,7 +1619,6 @@ void RasterizerVulkan::UpdateStencilFaces(Tegra::Engines::Maxwell3D::Regs& regs)
             scheduler.Record([front_ref = regs.stencil_front_ref, back_ref = regs.stencil_back_ref,
                               two_sided = regs.stencil_two_side_enable](vk::CommandBuffer cmdbuf) {
                 const bool set_back = two_sided && front_ref != back_ref;
-                // Front face
                 cmdbuf.SetStencilReference(set_back ? VK_STENCIL_FACE_FRONT_BIT
                                                     : VK_STENCIL_FACE_FRONT_AND_BACK,
                                            front_ref);
@@ -1678,7 +1651,6 @@ void RasterizerVulkan::UpdateStencilFaces(Tegra::Engines::Maxwell3D::Regs& regs)
                               back_write_mask = regs.stencil_back_mask,
                               two_sided = regs.stencil_two_side_enable](vk::CommandBuffer cmdbuf) {
                 const bool set_back = two_sided && front_write_mask != back_write_mask;
-                // Front face
                 cmdbuf.SetStencilWriteMask(set_back ? VK_STENCIL_FACE_FRONT_BIT
                                                     : VK_STENCIL_FACE_FRONT_AND_BACK,
                                            front_write_mask);
@@ -1711,7 +1683,6 @@ void RasterizerVulkan::UpdateStencilFaces(Tegra::Engines::Maxwell3D::Regs& regs)
                               back_test_mask = regs.stencil_back_func_mask,
                               two_sided = regs.stencil_two_side_enable](vk::CommandBuffer cmdbuf) {
                 const bool set_back = two_sided && front_test_mask != back_test_mask;
-                // Front face
                 cmdbuf.SetStencilCompareMask(set_back ? VK_STENCIL_FACE_FRONT_BIT
                                                       : VK_STENCIL_FACE_FRONT_AND_BACK,
                                              front_test_mask);
@@ -1999,7 +1970,6 @@ void RasterizerVulkan::UpdateStencilOp(Tegra::Engines::Maxwell3D::Regs& regs) {
     const Maxwell::StencilOp::Op zpass = regs.stencil_front_op.zpass;
     const Maxwell::ComparisonOp compare = regs.stencil_front_op.func;
     if (regs.stencil_two_side_enable) {
-        // Separate stencil op per face
         const Maxwell::StencilOp::Op back_fail = regs.stencil_back_op.fail;
         const Maxwell::StencilOp::Op back_zfail = regs.stencil_back_op.zfail;
         const Maxwell::StencilOp::Op back_zpass = regs.stencil_back_op.zpass;
@@ -2015,7 +1985,6 @@ void RasterizerVulkan::UpdateStencilOp(Tegra::Engines::Maxwell3D::Regs& regs) {
                                    MaxwellToVK::ComparisonOp(back_compare));
         });
     } else {
-        // Front face defines the stencil op of both faces
         scheduler.Record([fail, zfail, zpass, compare](vk::CommandBuffer cmdbuf) {
             cmdbuf.SetStencilOpEXT(VK_STENCIL_FACE_FRONT_AND_BACK, MaxwellToVK::StencilOp(fail),
                                    MaxwellToVK::StencilOp(zpass), MaxwellToVK::StencilOp(zfail),
@@ -2091,9 +2060,7 @@ void RasterizerVulkan::UpdateBlending(Tegra::Engines::Maxwell3D::Regs& regs) {
             host_blend.alphaBlendOp = MaxwellToVK::BlendEquation(guest_blend.alpha_op);
         };
 
-        // Single blend equation for all targets
         if (!regs.blend_per_target_enabled) {
-            // Temporary workaround for games that use iterated blending
             if (regs.iterated_blend.enable && Settings::values.use_squashed_iterated_blend) {
                 setup_blends[0].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
                 setup_blends[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
@@ -2105,12 +2072,10 @@ void RasterizerVulkan::UpdateBlending(Tegra::Engines::Maxwell3D::Regs& regs) {
                 blend_setup(setup_blends[0], regs.blend);
             }
 
-            // Copy first blend state to all other targets
             for (size_t index = 1; index < Maxwell::NumRenderTargets; index++) {
                 setup_blends[index] = setup_blends[0];
             }
         } else {
-            // Per-target blending
             for (size_t index = 0; index < Maxwell::NumRenderTargets; index++) {
                 blend_setup(setup_blends[index], regs.blend_per_target[index]);
             }
@@ -2164,7 +2129,6 @@ void RasterizerVulkan::UpdateVertexInput(Tegra::Engines::Maxwell3D::Regs& regs) 
         static_cast<u32>(std::min<size_t>(Maxwell::NumVertexArrays,
                                           device.GetMaxVertexInputBindings()));
 
-
     for (u32 index = 0; index < max_attributes; ++index) {
         const Maxwell::VertexAttribute attribute{regs.vertex_attrib_format[index]};
         const u32 binding{attribute.buffer};
@@ -2209,7 +2173,7 @@ void RasterizerVulkan::UpdateVertexInput(Tegra::Engines::Maxwell3D::Regs& regs) 
 void RasterizerVulkan::InitializeChannel(Tegra::Control::ChannelState& channel) {
     CreateChannel(channel);
     {
-        std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
         texture_cache.CreateChannel(channel);
         buffer_cache.CreateChannel(channel);
     }
@@ -2222,7 +2186,7 @@ void RasterizerVulkan::BindChannel(Tegra::Control::ChannelState& channel) {
     const s32 channel_id = channel.bind_id;
     BindToChannel(channel_id);
     {
-        std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
         texture_cache.BindToChannel(channel_id);
         buffer_cache.BindToChannel(channel_id);
     }
@@ -2235,7 +2199,7 @@ void RasterizerVulkan::BindChannel(Tegra::Control::ChannelState& channel) {
 void RasterizerVulkan::ReleaseChannel(s32 channel_id) {
     EraseChannel(channel_id);
     {
-        std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+        std::scoped_lock lock{buffer_cache.rw_mutex, texture_cache.mutex};
         texture_cache.EraseChannel(channel_id);
         buffer_cache.EraseChannel(channel_id);
     }
